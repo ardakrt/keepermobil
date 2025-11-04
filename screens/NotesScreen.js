@@ -815,15 +815,16 @@ const NotesScreen = ({ navigation, route }) => {
     return null;
   };
 
-  const renderNoteItem = ({ item }) => {
+  const renderNoteItem = ({ item, index }) => {
     const isEditing = editingId === item.id;
     const isSelected = selectedIds.includes(item.id);
 
     return (
       <Animated.View
-        entering={FadeInDown.duration(180)}
-        exiting={FadeOutUp.duration(160)}
-        layout={Layout.springify().stiffness(180)}
+        entering={FadeInDown.duration(250).delay(index * 50)}
+        exiting={FadeOutUp.duration(150)}
+        layout={Layout.duration(300)}
+        style={{ flex: 1 }}
       >
         <TouchableOpacity
           activeOpacity={0.92}
@@ -976,9 +977,6 @@ const NotesScreen = ({ navigation, route }) => {
                 <MaterialCommunityIcons name="sort" size={22} color={theme.colors.text} />
               </TouchableOpacity>
             </View>
-            <View style={styles.filterContainer}>
-              <Text style={styles.filterLabel}>{filteredNotes.length} not</Text>
-            </View>
           </>
         ) : (
           <View style={styles.multiSelectToolbar}>            
@@ -1020,9 +1018,10 @@ const NotesScreen = ({ navigation, route }) => {
           if (item.__type === 'add') {
             return (
               <Animated.View
-                entering={FadeInDown.duration(180)}
-                exiting={FadeOutUp.duration(160)}
-                layout={Layout.springify().stiffness(180)}
+                entering={FadeInDown.duration(250).delay(100)}
+                exiting={FadeOutUp.duration(150)}
+                layout={Layout.duration(300)}
+                style={{ flex: 1 }}
               >
                 <TouchableOpacity
                   activeOpacity={0.9}
@@ -1043,6 +1042,10 @@ const NotesScreen = ({ navigation, route }) => {
         ]}
         ListEmptyComponent={renderEmptyList}
         showsVerticalScrollIndicator={false}
+        removeClippedSubviews={false}
+        initialNumToRender={10}
+        maxToRenderPerBatch={10}
+        windowSize={10}
       />
 
       {/* FAB kaldırıldı; not detayı ekranı ile tek alan düzenine geçildi */}
