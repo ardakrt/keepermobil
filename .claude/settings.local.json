@@ -4,7 +4,8 @@
       "WebFetch(domain:docs.ozan.com)",
       "WebFetch(domain:pay.enuygun.com)",
       "Bash(node -e:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []
