@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Platform, Share, StyleSheet, Text, TextInput, View, TouchableOpacity, Animated } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Share, StyleSheet, Text, TextInput, View, TouchableOpacity, Animated, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../lib/theme';
 import { supabase } from '../lib/supabaseClient';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
+import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useConfirm } from '../lib/confirm';
+import { useToast } from '../lib/toast';
 
 const deriveTitle = (text) => {
   const firstLine = (text || '').split(/\r?\n/)[0].trim();
@@ -15,57 +16,111 @@ const deriveTitle = (text) => {
 };
 
 const NoteDetailScreen = ({ route, navigation }) => {
-  const { theme } = useAppTheme();
+  const { theme, accent } = useAppTheme();
+  const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
+  
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        container: { flex: 1, backgroundColor: theme.colors.background },
+        container: { 
+          flex: 1, 
+          backgroundColor: accent && theme.colors.backgroundTinted 
+            ? theme.colors.backgroundTinted 
+            : theme.colors.background 
+        },
         header: {
-          paddingTop: Platform.OS === 'android' ? 8 : 12,
-          paddingHorizontal: 8,
-          paddingBottom: 8,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 6,
-          backgroundColor: 'transparent',
+          paddingTop: insets.top + 8,
+          paddingHorizontal: 16,
+          paddingBottom: 12,
+          backgroundColor: accent && theme.colors.backgroundTinted 
+            ? theme.colors.backgroundTinted 
+            : theme.colors.background,
           borderBottomWidth: 1,
           borderColor: theme.colors.border,
         },
-        backButton: { padding: 8, borderRadius: 10 },
-        titleInput: {
-          flex: 1,
+        headerTop: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: 12,
+        },
+        backButton: { 
+          width: 40,
           height: 40,
-          borderRadius: 10,
+          borderRadius: 20,
+          backgroundColor: theme.colors.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        headerTitle: {
+          flex: 1,
+          fontSize: 18,
+          fontWeight: '600',
+          color: theme.colors.text,
+        },
+        actionButtons: {
+          flexDirection: 'row',
+          gap: 8,
+        },
+        iconBtn: {
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          backgroundColor: theme.colors.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        titleInput: {
+          height: 56,
+          borderRadius: 12,
           borderWidth: 1,
           borderColor: theme.colors.border,
           backgroundColor: theme.colors.surfaceElevated,
           color: theme.colors.text,
-          paddingHorizontal: 12,
-          fontSize: 16,
+          paddingHorizontal: 16,
+          fontSize: 20,
+          fontWeight: '700',
         },
-        rightActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-        iconBtn: {
-          padding: 8,
-          borderRadius: 10,
-          backgroundColor: theme.colors.surface,
-          borderWidth: 1,
+        statusBar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 16,
+          paddingVertical: 8,
+          backgroundColor: accent && theme.colors.surfaceTinted 
+            ? theme.colors.surfaceTinted 
+            : theme.colors.surface,
+          borderBottomWidth: 1,
           borderColor: theme.colors.border,
         },
-        saveInfo: { color: theme.colors.muted, fontSize: 12, marginRight: 6 },
-        dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.colors.muted },
+        statusText: { 
+          fontSize: 13, 
+          color: theme.colors.muted,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+        },
+        savingDot: { 
+          width: 6, 
+          height: 6, 
+          borderRadius: 3, 
+          backgroundColor: theme.colors.primary 
+        },
         editor: {
           flex: 1,
           color: theme.colors.text,
-          paddingHorizontal: 16,
-          paddingVertical: 12,
-          backgroundColor: theme.colors.surface,
-          borderTopWidth: 1,
-          borderColor: theme.colors.border,
+          paddingHorizontal: 20,
+          paddingVertical: 20,
+          backgroundColor: accent && theme.colors.surfaceTinted 
+            ? theme.colors.surfaceTinted 
+            : theme.colors.surface,
           textAlignVertical: 'top',
-          fontSize: 16,
+          fontSize: 17,
+          lineHeight: 26,
         },
       }),
-    [theme],
+    [theme, accent, insets],
   );
 
   const noteIdParam = route?.params?.noteId ?? null;
@@ -208,8 +263,11 @@ const NoteDetailScreen = ({ route, navigation }) => {
   const handleCopyAll = async () => {
     try {
       await Clipboard.setStringAsync(getShareText());
+      showToast('Başarılı', 'Not kopyalandı', 1500);
       try { Haptics.selectionAsync(); } catch {}
-    } catch {}
+    } catch {
+      showToast('Hata', 'Kopyalanamadı', 1500);
+    }
   };
 
   const handleShare = async () => {
@@ -227,7 +285,9 @@ const NoteDetailScreen = ({ route, navigation }) => {
       const arr = raw ? JSON.parse(raw) : [];
       const next = arr.includes(noteId) ? arr.filter((x) => x !== noteId) : [noteId, ...arr];
       await AsyncStorage.setItem('PINNED_NOTE_IDS', JSON.stringify(next));
-      setPinned(next.includes(noteId));
+      const isPinned = next.includes(noteId);
+      setPinned(isPinned);
+      showToast('Başarılı', isPinned ? 'Not sabitlendi' : 'Sabitleme kaldırıldı', 1000);
       try { Haptics.selectionAsync(); } catch {}
     } catch {}
   };
@@ -252,47 +312,65 @@ const NoteDetailScreen = ({ route, navigation }) => {
 
   return (
     <View style={styles.container}>
-      <BlurView
-        intensity={40}
-        tint={theme.colors.surface === '#ffffff' ? 'light' : 'dark'}
-        style={styles.header}
-      >
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={theme.colors.text} />
-        </TouchableOpacity>
+      <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
+      
+      {/* Modern Header */}
+      <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={22} color={theme.colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            {title || 'Yeni Not'}
+          </Text>
+          <View style={styles.actionButtons}>
+            <TouchableOpacity style={styles.iconBtn} onPress={togglePin}>
+              <Ionicons 
+                name={pinned ? 'star' : 'star-outline'} 
+                size={20} 
+                color={pinned ? theme.colors.warning : theme.colors.text} 
+              />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconBtn} onPress={handleCopyAll}>
+              <Ionicons name="copy-outline" size={20} color={theme.colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconBtn} onPress={handleShare}>
+              <Ionicons name="share-outline" size={20} color={theme.colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.iconBtn} onPress={handleDelete}>
+              <Ionicons name="trash-outline" size={20} color={theme.colors.danger} />
+            </TouchableOpacity>
+          </View>
+        </View>
+        
+        {/* Title Input */}
         <TextInput
           style={styles.titleInput}
           value={title}
           onChangeText={onChangeTitle}
-          placeholder="Başlıksız"
+          placeholder="Başlık"
           placeholderTextColor={theme.colors.muted}
           returnKeyType="next"
         />
-        <View style={styles.rightActions}>
+      </View>
+
+      {/* Status Bar */}
+      {(saving || (showSaved && lastSavedAt)) && (
+        <View style={styles.statusBar}>
           {saving ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Animated.View style={[styles.dot, { opacity: dotOpacity }]} />
-              <Text style={styles.saveInfo}>Kaydediliyor…</Text>
+            <View style={styles.statusText}>
+              <Animated.View style={[styles.savingDot, { opacity: dotOpacity }]} />
+              <Text style={{ fontSize: 13, color: theme.colors.muted }}>Kaydediliyor...</Text>
             </View>
           ) : showSaved && lastSavedAt ? (
-            <Text style={styles.saveInfo}>
-              Kaydedildi {lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            <Text style={styles.statusText}>
+              ✓ Kaydedildi {lastSavedAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
             </Text>
           ) : null}
-          <TouchableOpacity style={styles.iconBtn} onPress={togglePin}>
-            <MaterialCommunityIcons name={pinned ? 'star' : 'star-outline'} size={18} color={pinned ? theme.colors.warning : theme.colors.text} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={handleCopyAll}>
-            <MaterialCommunityIcons name="content-copy" size={18} color={theme.colors.text} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={handleShare}>
-            <MaterialCommunityIcons name="share-variant" size={18} color={theme.colors.text} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn} onPress={handleDelete}>
-            <MaterialCommunityIcons name="trash-can-outline" size={18} color={theme.colors.danger} />
-          </TouchableOpacity>
         </View>
-      </BlurView>
+      )}
+
+      {/* Editor */}
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <TextInput
           style={styles.editor}
@@ -301,7 +379,7 @@ const NoteDetailScreen = ({ route, navigation }) => {
           placeholder="Notunuzu yazın..."
           placeholderTextColor={theme.colors.muted}
           multiline
-          autoFocus
+          autoFocus={!noteIdParam}
         />
       </KeyboardAvoidingView>
     </View>
