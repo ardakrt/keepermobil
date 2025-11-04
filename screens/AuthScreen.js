@@ -613,7 +613,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
         borderRadius: 12,
         borderWidth: 2,
         borderColor: pinErrorRef.current ? theme.colors.danger : (isActive || filled ? theme.colors.primary : theme.colors.border),
-        backgroundColor: pinErrorRef.current ? theme.colors.danger + '08' : (filled ? theme.colors.primary + '08' : theme.colors.surfaceElevated),
+        backgroundColor: pinErrorRef.current ? theme.colors.danger + '08' : (isActive ? theme.colors.primary + '05' : theme.colors.surfaceElevated),
         alignItems: 'center',
         justifyContent: 'center',
       };
@@ -627,12 +627,12 @@ const AuthScreen = ({ onAuthSuccess }) => {
             baseStyle,
             {
               backgroundColor: successBg,
-              shadowColor: isActive ? theme.colors.primary : (filled ? theme.colors.primary : 'transparent'),
-              shadowOpacity: isActive ? 0.45 : (filled ? 0.15 : 0),
-              shadowRadius: isActive ? 10 : (filled ? 4 : 0),
-              shadowOffset: { width: 0, height: isActive ? 4 : 2 },
-              elevation: isActive ? 6 : (filled ? 2 : 0),
-              transform: [{ scale: isActive ? 1.05 : (filled ? 1.01 : 1) }],
+              shadowColor: isActive ? theme.colors.primary : 'transparent',
+              shadowOpacity: isActive ? 0.4 : 0,
+              shadowRadius: isActive ? 8 : 0,
+              shadowOffset: { width: 0, height: isActive ? 3 : 0 },
+              elevation: isActive ? 5 : 0,
+              transform: [{ scale: isActive ? 1.04 : 1 }],
             },
           ]}
         >
