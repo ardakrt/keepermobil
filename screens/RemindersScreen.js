@@ -768,28 +768,30 @@ const RemindersScreen = () => {
         keeperTitle: {
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 8,
+          gap: 12,
         },
         keeperIcon: {
-          width: 32,
-          height: 32,
-          borderRadius: 16,
+          width: 42,
+          height: 42,
+          borderRadius: 21,
           backgroundColor: theme.colors.primary + '15',
           alignItems: 'center',
           justifyContent: 'center',
+          borderWidth: 2,
+          borderColor: theme.colors.primary + '30',
         },
         keeperText: {
           color: theme.colors.text,
-          fontWeight: '700',
-          fontSize: 20,
-          letterSpacing: 0.3,
+          fontWeight: '800',
+          fontSize: 26,
+          letterSpacing: 0.8,
         },
         profileButton: {
-          padding: 2,
+          padding: 3,
           borderRadius: 999,
-          borderWidth: 2,
-          borderColor: theme.colors.primary + '30',
-          backgroundColor: theme.colors.surface,
+          borderWidth: 2.5,
+          borderColor: theme.colors.primary + '40',
+          backgroundColor: 'transparent',
         },
         filterContainer: {
           flexDirection: 'row',
@@ -1176,7 +1178,7 @@ const RemindersScreen = () => {
           <View style={styles.headerTop}>
             <View style={styles.keeperTitle}>
               <View style={styles.keeperIcon}>
-                <MaterialCommunityIcons name="bell-ring" size={18} color={theme.colors.primary} />
+                <MaterialCommunityIcons name="bell-ring" size={22} color={theme.colors.primary} />
               </View>
               <Text style={styles.keeperText}>Keeper</Text>
             </View>
@@ -1188,7 +1190,7 @@ const RemindersScreen = () => {
               <Avatar
                 name={session?.user?.user_metadata?.full_name || session?.user?.email}
                 imageUrl={session?.user?.user_metadata?.avatar_url}
-                size={32}
+                size={40}
               />
             </TouchableOpacity>
           </View>
