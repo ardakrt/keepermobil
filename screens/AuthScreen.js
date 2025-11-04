@@ -1,0 +1,1281 @@
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+  TextInput,
+  ScrollView,
+  KeyboardAvoidingView,
+  Keyboard,
+  Animated as RNAnimated,
+  Dimensions,
+  Pressable,
+  Image,
+} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
+
+import { supabase } from '../lib/supabaseClient';
+import { getResetRedirectURL } from '../lib/links';
+import { biometricPrefs } from '../lib/biometricPrefs';
+import {
+  REMEMBER_KEY,
+  SESSION_KEY,
+  REMEMBER_EMAIL_KEY,
+  REMEMBER_PASSWORD_KEY,
+  RECENT_EMAILS_KEY,
+  REMEMBER_FIRST_NAME_KEY,
+  REMEMBER_AVATAR_URL_KEY,
+} from '../lib/storageKeys';
+import { localAuth } from '../lib/localAuth';
+import Screen from '../components/Screen';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import Card from '../components/Card';
+import Button from '../components/Button';
+import Input from '../components/Input';
+import { useAppTheme } from '../lib/theme';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
+import { usePrefs } from '../lib/prefs';
+
+const AuthScreen = ({ onAuthSuccess }) => {
+  const [mode, setMode] = useState('signIn'); // signIn | signUp
+  const [signStep, setSignStep] = useState('email'); // email | pin
+
+  const [email, setEmail] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [pin, setPin] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [avatarLoading, setAvatarLoading] = useState(false);
+
+  // Sadece e-posta hatırlanacak; parola/PIN saklama kaldırıldı
+  const [rememberEmailEnabled, setRememberEmailEnabled] = useState(true); // future toggle if needed
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+
+  const [verificationMode, setVerificationMode] = useState(false);
+  const [verificationCode, setVerificationCode] = useState('');
+  const [verificationLoading, setVerificationLoading] = useState(false);
+  const [forgotCooldown, setForgotCooldown] = useState(0);
+  const [verifyCooldown, setVerifyCooldown] = useState(0);
+
+  const [biometricSupported, setBiometricSupported] = useState(false);
+  const [biometricEnrolled, setBiometricEnrolled] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [biometricSession, setBiometricSession] = useState(null);
+  const [biometricLoading, setBiometricLoading] = useState(false);
+  const { theme } = useAppTheme();
+  const [pinFocused, setPinFocused] = useState(false);
+  const lockScale = useRef(new RNAnimated.Value(1)).current;
+  const [recentEmails, setRecentEmails] = useState([]);
+  // Shake animation for error feedback on PIN field
+  const shakeAnim = useRef(new RNAnimated.Value(0)).current;
+  const lastTriedPinRef = useRef(null);
+  const keyboardOffset = useRef(new RNAnimated.Value(0)).current;
+  const pinErrorRef = useRef(false);
+  const successFlash = useRef(new RNAnimated.Value(0)).current;
+  const errorFlash = useRef(new RNAnimated.Value(0)).current;
+  const [failedCount, setFailedCount] = useState(0);
+  const [lockUntil, setLockUntil] = useState(null); // timestamp ms
+  const [lockRemaining, setLockRemaining] = useState(0);
+  const HANE_SAYISI = 6;
+  const hiddenPinInputRef = useRef(null);
+  const cardYRef = useRef(0);
+  const cardHeightRef = useRef(0);
+  const compressedHeader = useRef(new RNAnimated.Value(0)).current; // 0 normal, 1 compact
+  // Header artık tamamen kaybolmasın: 0 -> normal, 1 -> kısmen sıkışmış
+  const headerAnimatedStyle = {
+    height: compressedHeader.interpolate({ inputRange: [0,1], outputRange: [160, 110] }),
+    overflow: 'hidden',
+  };
+  const avatarScale = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.8] });
+  const displayOpacity = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.55] });
+  // Header sıkıştığında arkaya koyu bir overlay + altta gradient ekle
+  const overlayOpacity = compressedHeader.interpolate({ inputRange: [0, 0.0001, 1], outputRange: [0, 0, 0.65] });
+
+
+
+  useEffect(() => {
+    if (forgotCooldown <= 0) return;
+    const t = setInterval(() => setForgotCooldown((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, [forgotCooldown]);
+
+  useEffect(() => {
+    if (verifyCooldown <= 0) return;
+    const t = setInterval(() => setVerifyCooldown((s) => (s > 0 ? s - 1 : 0)), 1000);
+    return () => clearInterval(t);
+  }, [verifyCooldown]);
+
+  useEffect(() => {
+    RNAnimated.spring(lockScale, {
+      toValue: pinFocused ? 1.06 : 1,
+      useNativeDriver: true,
+      speed: 20,
+      bounciness: 6,
+    }).start();
+  }, [pinFocused]);
+
+  // Haptics preference
+  const { hapticsEnabled } = usePrefs();
+
+  // Klavye animasyonu
+  useEffect(() => {
+    const showSub = Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow';
+    const hideSub = Platform.OS === 'android' ? 'keyboardDidHide' : 'keyboardWillHide';
+    let lastShift = 0;
+    let animating = false;
+
+    const animateTo = (value, headerValue) => {
+      if (animating) return; // debounce
+      animating = true;
+      RNAnimated.parallel([
+        RNAnimated.timing(keyboardOffset, { toValue: value, duration: 200, useNativeDriver: true }),
+        RNAnimated.timing(compressedHeader, { toValue: headerValue, duration: 200, useNativeDriver: false }),
+      ]).start(() => { animating = false; });
+    };
+
+    const showListener = Keyboard.addListener(showSub, (e) => {
+      const kbH = e?.endCoordinates?.height || 0;
+      const screenH = Dimensions.get('window').height;
+      const targetTop = 56; // biraz daha fazla nefes alanı
+      const currentBottom = cardYRef.current + cardHeightRef.current;
+      const overlap = currentBottom + kbH - screenH;
+      let shift = 0;
+      if (overlap > 0) shift = overlap + 16; // tamponu biraz azalttık
+      shift = Math.max(shift, cardYRef.current - targetTop);
+      shift = Math.min(shift, 120); // çok daha düşük limit - Keeper her zaman görünsün
+      // Minimal hareket eşiği (göz kırpmasını engelle)
+      if (Math.abs(shift - lastShift) < 12) shift = lastShift; else lastShift = shift;
+      // Header hiç sıkıştırma - Keeper her zaman tam boyutunda
+      animateTo(-shift, 1);
+    });
+    const hideListener = Keyboard.addListener(hideSub, () => {
+      lastShift = 0;
+      animateTo(0, 0);
+    });
+    return () => {
+      showListener.remove();
+      hideListener.remove();
+    };
+  }, [keyboardOffset, compressedHeader]);
+
+  // Kilit geri sayım
+  useEffect(() => {
+    if (!lockUntil) return;
+    const update = () => {
+      const nowTs = Date.now();
+      if (nowTs >= lockUntil) {
+        setLockUntil(null);
+        setLockRemaining(0);
+        setFailedCount(0);
+      } else {
+        setLockRemaining(Math.ceil((lockUntil - nowTs) / 1000));
+      }
+    };
+    update();
+    const t = setInterval(update, 500);
+    return () => clearInterval(t);
+  }, [lockUntil]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [storedEmail, storedRecent] = await Promise.all([
+          AsyncStorage.getItem(REMEMBER_EMAIL_KEY),
+          AsyncStorage.getItem(RECENT_EMAILS_KEY),
+        ]);
+        const emailVal = (storedEmail || '').trim();
+        if (emailVal) {
+          setEmail(emailVal);
+          // Kullanıcı daha önce e-posta girmişse, doğrudan PIN adımı ile karşıla
+          setSignStep('pin');
+
+          // Email'e özel kullanıcı bilgilerini yükle
+          const [storedFirstName, storedAvatarUrl] = await Promise.all([
+            AsyncStorage.getItem(`${REMEMBER_FIRST_NAME_KEY}_${emailVal}`),
+            AsyncStorage.getItem(`${REMEMBER_AVATAR_URL_KEY}_${emailVal}`),
+          ]);
+          if (storedFirstName) {
+            setFirstName(storedFirstName);
+          }
+          if (storedAvatarUrl) {
+            setAvatarUrl(storedAvatarUrl);
+          }
+        }
+        if (storedRecent) {
+          try { setRecentEmails(JSON.parse(storedRecent) || []); } catch {}
+        }
+      } catch (err) {
+        console.warn('Email remember load failed', err);
+      }
+
+      try {
+        const hardware = await localAuth.hasHardwareAsync();
+        const types = await localAuth.supportedAuthenticationTypesAsync();
+        const supports = hardware || (types?.length ?? 0) > 0;
+        const enrolled = supports ? await localAuth.isEnrolledAsync() : false;
+
+        setBiometricSupported(supports);
+        setBiometricEnrolled(!!enrolled);
+
+        const optIn = await biometricPrefs.getOptIn();
+        const session = await biometricPrefs.getStoredSession();
+
+        if (optIn && session) {
+          setBiometricEnabled(true);
+          setBiometricSession(session);
+        }
+      } catch (err) {
+        console.warn('Biometric capability check failed', err);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!rememberEmailEnabled) return;
+    AsyncStorage.setItem(REMEMBER_EMAIL_KEY, email.trim()).catch(() => undefined);
+  }, [email, rememberEmailEnabled]);
+
+  // Email değiştiğinde o emaile ait kullanıcı bilgilerini yükle
+  useEffect(() => {
+    if (!email.trim() || mode === 'signUp') return;
+
+    (async () => {
+      try {
+        // Önce AsyncStorage'dan cached değeri dene
+        const cachedName = await AsyncStorage.getItem(`${REMEMBER_FIRST_NAME_KEY}_${email.trim()}`);
+        const cachedAvatar = await AsyncStorage.getItem(`${REMEMBER_AVATAR_URL_KEY}_${email.trim()}`);
+
+        if (cachedName) setFirstName(cachedName);
+        if (cachedAvatar) setAvatarUrl(cachedAvatar);
+      } catch (err) {
+        console.warn('Failed to load cached user data', err);
+      }
+    })();
+  }, [email, mode]);
+
+  // PIN adımına geçildiğinde isim boşsa kayıt sırasında girilen isimden (cache/metadata) çekmeyi dene
+  useEffect(() => {
+    if (mode !== 'signIn' || signStep !== 'pin') return;
+    if (!email.trim() || firstName.trim()) return;
+    (async () => {
+      try {
+        const cachedName = await AsyncStorage.getItem(`${REMEMBER_FIRST_NAME_KEY}_${email.trim()}`);
+        if (cachedName) {
+          setFirstName(cachedName);
+          return;
+        }
+        // Oturum beklenmedik şekilde mevcutsa metadata'dan dene
+        const { data } = await supabase.auth.getSession();
+        const metaName = data?.session?.user?.user_metadata?.full_name || data?.session?.user?.user_metadata?.first_name;
+        if (metaName) setFirstName(metaName);
+      } catch (err) {
+        // sessizce geç
+      }
+    })();
+  }, [mode, signStep, email, firstName]);
+
+  const persistSessionIfNeeded = async (session) => {
+    if (!session) {
+      return;
+    }
+
+    try {
+      const userEmail = email.trim();
+      // Sadece email sakla (isteğe bağlı session saklamıyoruz)
+      await AsyncStorage.setItem(REMEMBER_EMAIL_KEY, userEmail);
+      const metaName = session?.user?.user_metadata?.full_name || session?.user?.user_metadata?.first_name || firstName?.trim();
+      if (metaName) {
+        await AsyncStorage.setItem(`${REMEMBER_FIRST_NAME_KEY}_${userEmail}`, metaName);
+        setFirstName(metaName);
+      }
+      const metaAvatar = session?.user?.user_metadata?.avatar_url;
+      if (metaAvatar) {
+        await AsyncStorage.setItem(`${REMEMBER_AVATAR_URL_KEY}_${userEmail}`, metaAvatar);
+        setAvatarUrl(metaAvatar);
+      }
+    } catch (err) {
+      console.warn('Session persistence failed', err);
+    }
+  };
+
+  const storeBiometricSession = async (session) => {
+    if (!session?.refresh_token || !session?.access_token || !localAuth.hasFullSupport()) {
+      return;
+    }
+
+    try {
+      await biometricPrefs.setStoredSession(session);
+      setBiometricEnabled(true);
+      setBiometricSession(session);
+    } catch (err) {
+      console.warn('Biometric session store failed', err);
+    }
+  };
+
+
+  const finalizeAuth = async (session) => {
+    await persistSessionIfNeeded(session);
+    // Ensure supabase client has the active session so subsequent queries work
+    try {
+      if (session?.access_token && session?.refresh_token) {
+        await supabase.auth.setSession({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+        });
+      }
+    } catch (e) {
+      console.warn('Supabase setSession after auth failed', e);
+    }
+    onAuthSuccess?.(session ?? null);
+    // recent emails list update
+    try {
+      const clean = email.trim().toLowerCase();
+      if (clean) {
+        const next = [clean, ...recentEmails.filter((e) => e !== clean)].slice(0, 3);
+        setRecentEmails(next);
+        await AsyncStorage.setItem(RECENT_EMAILS_KEY, JSON.stringify(next));
+      }
+    } catch {}
+  };
+
+  const requireBiometricBeforeLogin = async () => {
+    const optIn = await biometricPrefs.getOptIn();
+    if (!optIn) {
+      return true;
+    }
+
+    if (!localAuth.hasFullSupport()) {
+      setError('Parmak izi doğrulaması bu cihazda desteklenmiyor.');
+      return false;
+    }
+
+    try {
+      const auth = await localAuth.authenticateAsync({
+        promptMessage: 'Parmak izi doğrulaması',
+      });
+      if (!auth.success) {
+        setError('Parmak izi doğrulaması iptal edildi.');
+        return false;
+      }
+      return true;
+    } catch (err) {
+      setError(err.message ?? 'Parmak izi doğrulaması başarısız.');
+      return false;
+    }
+  };
+
+  const validatePin = () => {
+    if (!/^\d{6}$/.test(pin)) {
+      setError('PIN 6 haneli olmalıdır.');
+      return false;
+    }
+    return true;
+  };
+
+  const triggerShake = () => {
+    shakeAnim.setValue(0);
+    const seq = [];
+    const pattern = [1, -1, 1, -1, 0];
+    pattern.forEach((val, idx) => {
+      seq.push(
+        RNAnimated.timing(shakeAnim, {
+          toValue: val,
+          duration: idx === pattern.length - 1 ? 60 : 45,
+          useNativeDriver: true,
+        }),
+      );
+    });
+    RNAnimated.sequence(seq).start();
+  };
+
+  const handleAuth = async () => {
+    if (lockUntil) {
+      if (hapticsEnabled) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+      }
+      errorFlash.setValue(0);
+      RNAnimated.sequence([
+        RNAnimated.timing(errorFlash, { toValue: 1, duration: 140, useNativeDriver: true }),
+        RNAnimated.timing(errorFlash, { toValue: 0, duration: 240, useNativeDriver: true }),
+      ]).start();
+      return;
+    }
+  // Başarılı akışta titreşim istemiyoruz; yalnızca hata durumlarında titreşim var
+    setLoading(true);
+    setError('');
+    setInfo('');
+
+    try {
+      if (!email.trim()) {
+        setError('Lütfen e-posta girin.');
+        setSignStep('email');
+        return;
+      }
+
+      if (mode === 'signUp' && !firstName.trim()) {
+        setError('Lütfen isminizi girin.');
+        return;
+      }
+
+      if (mode === 'signIn' && signStep === 'email') {
+        setPin('');
+        setSignStep('pin');
+        return;
+      }
+
+      if (mode === 'signUp' && signStep === 'email') {
+        setPin('');
+        setSignStep('pin');
+        return;
+      }
+
+      if (!validatePin()) {
+        errorFlash.setValue(0);
+        RNAnimated.sequence([
+          RNAnimated.timing(errorFlash, { toValue: 1, duration: 120, useNativeDriver: true }),
+          RNAnimated.timing(errorFlash, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]).start();
+        return;
+      }
+
+      if (mode === 'signIn') {
+        const canProceed = await requireBiometricBeforeLogin();
+        if (!canProceed) {
+          return;
+        }
+
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password: pin,
+        });
+        if (signInError) {
+          setError('Şifre veya e-posta hatalı.');
+          pinErrorRef.current = true;
+          setFailedCount((c) => {
+            const next = c + 1;
+            if (next >= 3) {
+              const lockMs = 15000; // 15s kilit
+              setLockUntil(Date.now() + lockMs);
+            }
+            return next;
+          });
+          if (hapticsEnabled) {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
+          }
+          triggerShake();
+          successFlash.setValue(0);
+          errorFlash.setValue(0);
+          RNAnimated.sequence([
+            RNAnimated.timing(errorFlash, { toValue: 1, duration: 140, useNativeDriver: true }),
+            RNAnimated.timing(errorFlash, { toValue: 0, duration: 280, useNativeDriver: true }),
+          ]).start();
+          return;
+        }
+        // Başarılı giriş: success flash animasyonu
+        pinErrorRef.current = false;
+        setFailedCount(0);
+        errorFlash.setValue(0);
+        successFlash.setValue(0);
+        RNAnimated.sequence([
+          RNAnimated.timing(successFlash, { toValue: 1, duration: 100, useNativeDriver: true }),
+          RNAnimated.timing(successFlash, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]).start();
+        // finalizeAuth hemen çağırmak yerine hafif gecikme ile görseli göster
+        setTimeout(() => { finalizeAuth(data.session); }, 120);
+        return;
+      }
+
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: pin,
+        options: { data: { first_name: firstName.trim(), full_name: firstName.trim() } },
+      });
+      if (signUpError) {
+        setError(signUpError.message);
+        return;
+      }
+
+      if (!data.session) {
+        setVerificationMode(true);
+        setInfo('E-posta kutuna gelen 6 haneli kodu girerek hesabını doğrula.');
+        return;
+      }
+
+      await finalizeAuth(data.session);
+    } catch (err) {
+      setError(err.message ?? 'Beklenmeyen bir hata oluştu.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Otomatik giriş: PIN 6 haneye ulaştığında (signIn modunda ve pin adımında) otomatik dene
+  useEffect(() => {
+    if (mode === 'signIn' && signStep === 'pin' && /^\d{6}$/.test(pin) && !loading) {
+      // Aynı PIN ile tekrar tekrar tetiklemeyi engelle
+      if (lastTriedPinRef.current === pin) return;
+      lastTriedPinRef.current = pin;
+      handleAuth();
+    }
+  }, [pin, mode, signStep, loading]);
+
+
+
+  // PIN değişince hata görselini temizle
+  useEffect(() => {
+    if (pinErrorRef.current && pin.length < 6) {
+      pinErrorRef.current = false;
+      if (error && error.startsWith('Şifre veya e-posta')) setError('');
+    }
+  }, [pin, error]);
+
+  const focusHiddenPin = useCallback(() => {
+    const input = hiddenPinInputRef.current;
+    if (!input) return;
+    let attempts = 0;
+    const maxAttempts = 8;
+    const tryFocus = () => {
+      attempts++;
+      input.focus?.();
+      if (Platform.OS === 'android') {
+        // Bazı cihazlarda frame değişimlerinde yeniden denemek gerekebilir
+        if (attempts < maxAttempts) {
+          requestAnimationFrame(() => {
+            // isFocused() false ise tekrar dene
+            if (!input.isFocused?.()) tryFocus();
+          });
+        }
+      }
+    };
+    tryFocus();
+  }, []);
+
+  // Klavye görünürlük durumu izleme ve geç kalmışsa tekrar focus
+  useEffect(() => {
+    if (signStep !== 'pin') return;
+    let shown = false;
+    const show = Keyboard.addListener('keyboardDidShow', () => { shown = true; });
+    const t1 = setTimeout(() => { if (!shown) focusHiddenPin(); }, 180);
+    const t2 = setTimeout(() => { if (!shown) focusHiddenPin(); }, 400);
+    const t3 = setTimeout(() => { if (!shown) focusHiddenPin(); }, 800);
+    return () => { show.remove(); clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, [signStep, focusHiddenPin]);
+
+  // Klavye açılmadıysa fallback: kısa süre izleyip kapalı kalırsa yeniden odakla
+  useEffect(() => {
+    if (signStep !== 'pin') return;
+    let triggered = false;
+    const showSub = Keyboard.addListener('keyboardDidShow', () => { triggered = true; });
+    const fallback = setTimeout(() => {
+      if (!triggered) focusHiddenPin();
+    }, 250);
+    return () => { showSub.remove(); clearTimeout(fallback); };
+  }, [signStep, focusHiddenPin]);
+
+  const handlePinChange = (value) => {
+    if (lockUntil) return; // kilitliyken giriş alma
+    const digits = value.replace(/\D/g, '').slice(0, HANE_SAYISI);
+    setPin(digits);
+  };
+
+  const handleBoxPress = () => {
+    // Odaklamayı daha güvenilir hale getirmek için kısa bir gecikme ekleyin
+    setTimeout(() => {
+      focusHiddenPin();
+    }, 50); // 50ms gecikme
+
+    // Ek bir güvenlik önlemi olarak, kısa bir süre sonra tekrar odaklanmayı deneyin
+    setTimeout(() => {
+      focusHiddenPin();
+    }, 150); // 150ms'de ikinci deneme
+  };
+
+  const renderOtpBoxes = (isSignUp) => {
+    const chars = pin.split('');
+  const boxes = Array.from({ length: HANE_SAYISI }, (_, i) => {
+      const ch = chars[i] || '';
+      const filled = i < chars.length;
+  const showChar = filled ? '•' : '';
+      const baseStyle = {
+        width: 46,
+        height: 56,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: pinErrorRef.current ? theme.colors.danger : theme.colors.border,
+        backgroundColor: pinErrorRef.current ? theme.colors.danger + '10' : theme.colors.surface,
+        alignItems: 'center',
+        justifyContent: 'center',
+      };
+      const focusBorder = chars.length === i && !pinErrorRef.current ? { borderColor: theme.colors.primary } : null;
+      const isActive = chars.length === i && !pinErrorRef.current;
+      const successBg = successFlash.interpolate({ inputRange: [0, 1], outputRange: [baseStyle.backgroundColor, theme.colors.success + '33'] });
+      const errorBgOpacity = errorFlash.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
+      return (
+        <RNAnimated.View
+          key={i}
+          style={[
+            baseStyle,
+            focusBorder,
+            {
+              backgroundColor: successBg,
+              shadowColor: isActive ? theme.colors.primary : 'transparent',
+              shadowOpacity: isActive ? 0.35 : 0,
+              shadowRadius: isActive ? 6 : 0,
+              shadowOffset: { width: 0, height: 2 },
+              elevation: isActive ? 4 : 0,
+              transform: [{ scale: isActive ? 1.04 : 1 }],
+            },
+          ]}
+        >
+          {/* Hata durumunda hafif kırmızı overlay */}
+          <RNAnimated.View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: theme.colors.danger, opacity: errorBgOpacity, borderRadius: 10 }} />
+          <Text style={{ fontSize: 20, fontWeight: '600', color: theme.colors.text }}>{showChar}</Text>
+        </RNAnimated.View>
+      );
+    });
+    return (
+      <Pressable
+        android_disableSound
+        onPress={handleBoxPress}
+        style={{ alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 8 }}
+        accessibilityLabel={isSignUp ? 'PIN gir' : 'Şifre gir'}
+        accessibilityRole="button"
+      >
+        <View style={{ flexDirection: 'row', gap: 10 }}>{boxes}</View>
+      </Pressable>
+    );
+  };
+
+  const handleVerifyCode = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    if (!verificationCode.trim()) {
+      setError('Lütfen doğrulama kodunu girin.');
+      return;
+    }
+
+    setVerificationLoading(true);
+    setError('');
+
+    try {
+      const { data, error: verifyError } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: verificationCode.trim(),
+        type: 'signup',
+      });
+
+      if (verifyError) {
+        setError(verifyError.message);
+        return;
+      }
+
+      setVerificationMode(false);
+      setVerificationCode('');
+      setInfo('Hesabın doğrulandı.');
+
+      await finalizeAuth(data.session);
+    } catch (err) {
+      setError(err.message ?? 'Kod doğrulanamadı.');
+    } finally {
+      setVerificationLoading(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    if (typeof verifyCooldown === 'number' && verifyCooldown > 0) return;
+    if (!email.trim()) {
+      setError('Geçerli bir e-posta adresi girin.');
+      return;
+    }
+
+    try {
+      await supabase.auth.resend({ type: 'signup', email: email.trim() });
+      setInfo('Doğrulama kodu yeniden gönderildi.');
+      if (typeof setVerifyCooldown === 'function') setVerifyCooldown(60);
+    } catch (err) {
+      setError(err.message ?? 'Kod yeniden gönderilemedi.');
+    }
+  };
+
+  const toggleMode = () => {
+    Haptics.selectionAsync().catch(() => undefined);
+    setMode((prev) => (prev === 'signIn' ? 'signUp' : 'signIn'));
+    setSignStep('email');
+    setError('');
+    setInfo('');
+    setVerificationMode(false);
+    setVerificationCode('');
+  };
+
+  const handleBiometricLogin = async () => {
+    if (!biometricSession || !localAuth.hasFullSupport()) {
+      setError('Parmak izi için kayıtlı oturum bulunamadı.');
+      return;
+    }
+
+    setBiometricLoading(true);
+    setError('');
+
+    try {
+      const auth = await localAuth.authenticateAsync({
+        promptMessage: 'Parmak izi doğrulaması',
+      });
+
+      if (!auth.success) {
+        setError('Parmak izi doğrulaması başarısız.');
+        return;
+      }
+
+      const { data, error: sessionError } = await supabase.auth.setSession(biometricSession);
+      if (sessionError) {
+        setError(sessionError.message);
+        return;
+      }
+
+      await biometricPrefs.setStoredSession(data.session);
+      onAuthSuccess?.(data.session ?? null);
+    } catch (err) {
+      setError(err.message ?? 'Parmak izi ile giriş tamamlanamadı.');
+    } finally {
+      setBiometricLoading(false);
+    }
+  };
+
+  // rememberMe kaldırıldı; sadece e-posta sessizce tutuluyor
+
+  const renderPrimaryButtonLabel = () => {
+    if (loading) {
+      return <ActivityIndicator color="#0f172a" />;
+    }
+
+    if (mode === 'signIn') {
+      return <Text style={styles.primaryButtonText}>{signStep === 'email' ? 'Devam' : 'Giriş Yap'}</Text>;
+    }
+
+    return <Text style={styles.primaryButtonText}>Kayıt Ol</Text>;
+  };
+
+  const getInitialsFromEmail = (val) => {
+    const user = (val || '').split('@')[0] || '';
+    const parts = user.split(/[._-]+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[1][0]).toUpperCase();
+    }
+    return (user.slice(0, 2) || '??').toUpperCase();
+  };
+
+  const getDisplayNameFromEmail = (val) => {
+    const user = (val || '').split('@')[0] || '';
+    const parts = user
+      .split(/[._-]+/)
+      .filter(Boolean)
+      .map((p) => (p.length ? p[0].toUpperCase() + p.slice(1) : p));
+    const name = parts.join(' ');
+    return (name || user || 'Kullanıcı').toUpperCase();
+  };
+
+  const getDisplayName = () => {
+    if (firstName.trim()) return firstName.trim();
+    return getDisplayNameFromEmail(email);
+  };
+
+  const handleForgotPassword = async () => {
+    if (typeof forgotCooldown === 'number' && forgotCooldown > 0) return;
+    if (!email.trim()) {
+      setError('Parola sıfırlamak için önce e-posta girin.');
+      setSignStep('email');
+      return;
+    }
+    try {
+      setInfo('Parola sıfırlama bağlantısı gönderiliyor...');
+      // Supabase'in gönderdiği e-postadaki link, redirectTo ile uygulama şemasına yönlendirilecek
+      await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: getResetRedirectURL(),
+      });
+      setInfo('E-posta kutunu kontrol et. Parola sıfırlama bağlantısı gönderildi.');
+      if (typeof setForgotCooldown === 'function') setForgotCooldown(60);
+    } catch (err) {
+      setError(err.message ?? 'Parola sıfırlama başlatılamadı.');
+    }
+  };
+
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: { alignItems: 'center', justifyContent: 'center' },
+        card: { width: '100%', maxWidth: 360, gap: 20, paddingVertical: 20 },
+        title: { fontSize: 24, fontWeight: '700', color: theme.colors.text, letterSpacing: 0.3 },
+        subtitle: { fontSize: 15, color: theme.colors.textSecondary },
+        helperText: { color: theme.colors.muted, fontSize: 12 },
+        checkboxRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          paddingVertical: 10,
+          paddingHorizontal: 12,
+          borderRadius: 12,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface,
+        },
+        checkboxRowActive: {
+          borderColor: theme.colors.primary,
+          backgroundColor: theme.colors.surfaceElevated,
+        },
+        checkbox: {
+          width: 20,
+          height: 20,
+          borderRadius: 6,
+          borderWidth: 2,
+          borderColor: theme.colors.primary,
+          backgroundColor: 'transparent',
+        },
+        checkboxChecked: { backgroundColor: theme.colors.primary },
+        checkboxLabel: { color: theme.colors.textSecondary, fontWeight: '500' },
+        primaryButton: {
+          height: 48,
+          borderRadius: 12,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        primaryButtonText: { fontWeight: '700', color: theme.colors.background },
+        biometricButton: { backgroundColor: theme.colors.success },
+        errorText: { color: theme.colors.danger, fontSize: 13 },
+        infoText: { color: theme.colors.info, fontSize: 13 },
+        brandWrap: { alignItems: 'center', gap: 6, paddingBottom: 4 },
+        glassHeader: {
+          borderRadius: 28,
+          overflow: 'hidden',
+          padding: 12,
+          width: '100%',
+          alignItems: 'center',
+          backgroundColor: Platform.OS === 'android' ? theme.colors.surfaceElevated + 'AA' : 'rgba(255,255,255,0.06)',
+          borderWidth: 1,
+          borderColor: theme.colors.border + '55',
+        },
+        brandText: { fontSize: 20, fontWeight: '800', color: theme.colors.text },
+        avatar: {
+          width: 68,
+          height: 68,
+          borderRadius: 34,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.primary + '22',
+        },
+        avatarImage: {
+          width: '100%',
+          height: '100%',
+          borderRadius: 34,
+        },
+        avatarText: { fontSize: 20, fontWeight: '700', color: theme.colors.primary },
+        welcome: { fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center', marginTop: 2, letterSpacing: 0.5 },
+        displayName: { fontSize: 18, fontWeight: '700', color: theme.colors.text, textAlign: 'center' },
+        changeUser: { color: theme.colors.primary, textAlign: 'center', textDecorationLine: 'underline', fontSize: 12 },
+        pinField: {
+          height: 64,
+          borderRadius: 12,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface,
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: 16,
+          gap: 8,
+        },
+        pinInput: { flex: 1, color: theme.colors.text, fontSize: 18 },
+        forgotLink: { color: theme.colors.primary, fontWeight: '600' },
+  pinLabel: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '600', letterSpacing: 0.5 },
+        forgotWrap: { alignSelf: 'flex-end', paddingVertical: 8 },
+        pinFieldFocused: {
+          borderColor: theme.colors.primary,
+          backgroundColor: theme.colors.surfaceElevated,
+        },
+        actionPillsRow: { flexDirection: 'row', gap: 10, marginTop: 4, flexWrap: 'wrap' },
+        pillButton: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          borderRadius: 999,
+          backgroundColor: theme.colors.surfaceElevated,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        pillDisabled: { opacity: 0.5 },
+        pillText: { color: theme.colors.text, fontWeight: '600', fontSize: 13 },
+        emailChipsScroll: { marginTop: 4 },
+        emailChip: {
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          borderRadius: 999,
+          backgroundColor: theme.colors.surfaceElevated,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        emailChipText: { color: theme.colors.textSecondary, fontSize: 13 },
+        signupGrid: { flexDirection: 'row', gap: 16 },
+        signupCol: { flex: 1, gap: 8 },
+      }),
+    [theme],
+  );
+
+  return (
+    <Screen padded style={styles.container}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingVertical: 20 }} showsVerticalScrollIndicator={false}>
+      <Animated.View entering={FadeIn.duration(220)}>
+        <RNAnimated.View style={{ transform: [{ translateY: keyboardOffset }] }}>
+        {/* Gizli PIN input: ekrandan çıkarılmadı, OTP kutularına yakın daha güvenilir odak için later render içinde de bir kopya olacak (tek kopya burada değil) */}
+        <Card
+          style={styles.card}
+          onLayout={(e) => {
+            cardYRef.current = e.nativeEvent.layout.y;
+            cardHeightRef.current = e.nativeEvent.layout.height;
+          }}
+        >
+          {mode === 'signIn' && signStep === 'pin' ? (
+            <>
+              <RNAnimated.View style={[styles.glassHeader, headerAnimatedStyle]}>
+                {Platform.OS !== 'android' && (
+                  <BlurView
+                    pointerEvents="none"
+                    tint={theme.colors.surface === '#ffffff' ? 'light' : 'dark'}
+                    intensity={40}
+                    style={StyleSheet.absoluteFill}
+                  />
+                )}
+                {/* Koyu overlay */}
+                <RNAnimated.View pointerEvents="none" style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  opacity: overlayOpacity,
+                  backgroundColor: Platform.OS === 'ios' ? 'rgba(15,15,20,0.45)' : 'rgba(10,10,15,0.6)'
+                }} />
+                {/* Alttan gradient */}
+                <RNAnimated.View pointerEvents="none" style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: 90,
+                  opacity: overlayOpacity,
+                }}>
+                  <LinearGradient
+                    colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.25)', 'rgba(0,0,0,0.45)']}
+                    style={{ flex: 1 }}
+                    pointerEvents="none"
+                  />
+                </RNAnimated.View>
+                <RNAnimated.View style={{ alignItems: 'center', gap: 16, transform: [{ scale: avatarScale }] }}>
+                  <RNAnimated.View style={[styles.avatar, { width: 80, height: 80, borderRadius: 40 }]}>
+                    {avatarUrl ? (
+                      <>
+                        <Image
+                          source={{ uri: avatarUrl }}
+                          style={[styles.avatarImage, { borderRadius: 40 }]}
+                          onLoadStart={() => setAvatarLoading(true)}
+                          onLoadEnd={() => setAvatarLoading(false)}
+                          onError={() => setAvatarUrl(null)}
+                        />
+                        {avatarLoading && <ActivityIndicator style={{position: 'absolute'}}/>}
+                      </>
+                    ) : (
+                      <Text style={[styles.avatarText, { fontSize: 28 }]}>{(firstName?.[0] || getInitialsFromEmail(email)).toUpperCase()}</Text>
+                    )}
+                  </RNAnimated.View>
+                  <RNAnimated.View style={{ opacity: displayOpacity }}>
+                    <Text style={[styles.title, { fontSize: 22, fontWeight: '600', textAlign: 'center' }]}>
+                      Hoş geldin, {getDisplayName()}!
+                    </Text>
+                  </RNAnimated.View>
+                </RNAnimated.View>
+              </RNAnimated.View>
+
+              <View style={styles.actionPillsRow}>
+                {biometricSupported && biometricEnrolled && biometricEnabled && !verificationMode ? (
+                  <TouchableOpacity
+                    onPress={handleBiometricLogin}
+                    disabled={biometricLoading}
+                    style={[styles.pillButton, biometricLoading && styles.pillDisabled]}
+                  >
+                    {biometricLoading ? (
+                      <ActivityIndicator size="small" />
+                    ) : (
+                      <MaterialCommunityIcons name="fingerprint" size={20} color={theme.colors.primary} />
+                    )}
+                    <Text style={styles.pillText}>Biyometrik</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+
+              {!verificationMode ? (
+                <Animated.View entering={FadeInDown.duration(200)}>
+                <Text style={styles.pinLabel}>Şifre</Text>
+                <RNAnimated.View
+                  style={{
+                    transform: [
+                      {
+                        translateX: shakeAnim.interpolate({ inputRange: [-1, 1], outputRange: [-7, 7] }),
+                      },
+                    ],
+                    gap: 14,
+                    alignItems: 'center',
+                  }}
+                >
+                  {renderOtpBoxes(false)}
+                  <TextInput
+                    ref={hiddenPinInputRef}
+                    value={pin}
+                    onChangeText={handlePinChange}
+                    keyboardType="number-pad"
+                    secureTextEntry={true}
+                    showSoftInputOnFocus
+                    style={{ position: 'absolute', opacity: 0.03, height: 50, width: 240, top: 0, left: 0 }}
+                    caretHidden
+                    importantForAutofill="no"
+                    contextMenuHidden
+                  />
+                  <View style={{ alignSelf: 'stretch', minHeight: 0 }}>
+                    {lockUntil ? (
+                      <Text style={{ color: theme.colors.danger, fontWeight: '600', marginTop: 12 }}>Kilitli: {lockRemaining}s</Text>
+                    ) : null}
+                  </View>
+                  {/* Gizli input yukarı taşındı */}
+                </RNAnimated.View>
+                <TouchableOpacity style={styles.forgotWrap} onPress={handleForgotPassword} disabled={forgotCooldown > 0}>
+                  <Text style={[styles.forgotLink, forgotCooldown > 0 && { opacity: 0.6 }]}>
+                    {forgotCooldown > 0 ? `Tekrar dene: ${forgotCooldown}s` : 'Şifreni mi unuttun?'}
+                  </Text>
+                </TouchableOpacity>
+                {/* "Beni hatırla" kaldırıldı; yalnızca e-posta otomatik saklanıyor */}
+                </Animated.View>
+              ) : null}
+
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+              {info ? <Text style={styles.infoText}>{info}</Text> : null}
+
+              {!verificationMode ? (
+                <Button
+                  title="Giriş Yap"
+                  onPress={handleAuth}
+                  loading={loading}
+                  disabled={!/^\d{6}$/.test(pin)}
+                />
+              ) : (
+                <Button title="Kod ile doğrula" onPress={handleVerifyCode} loading={verificationLoading} />
+              )}
+
+              {verificationMode ? (
+                <Button
+                  title={verifyCooldown > 0 ? `Yeniden gönder (${verifyCooldown}s)` : 'Kod gelmedi mi? Yeniden gönder'}
+                  onPress={handleResendCode}
+                  variant="ghost"
+                  disabled={verifyCooldown > 0}
+                />
+              ) : (
+                <Button
+                  title={mode === 'signIn' ? 'Hesabın yok mu? Kayıt ol' : 'Zaten hesabın var mı? Giriş yap'}
+                  onPress={toggleMode}
+                  variant="ghost"
+                />
+              )}
+            </>
+          ) : (
+            <>
+              {mode === 'signIn' && signStep === 'email' ? (
+                <RNAnimated.View style={[styles.glassHeader, headerAnimatedStyle]}>
+                  {Platform.OS !== 'android' && (
+                    <BlurView
+                      pointerEvents="none"
+                      tint={theme.colors.surface === '#ffffff' ? 'light' : 'dark'}
+                      intensity={40}
+                      style={StyleSheet.absoluteFill}
+                    />
+                  )}
+                  <RNAnimated.View pointerEvents="none" style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    opacity: overlayOpacity,
+                    backgroundColor: Platform.OS === 'ios' ? 'rgba(15,15,20,0.45)' : 'rgba(10,10,15,0.6)'
+                  }} />
+                  <RNAnimated.View pointerEvents="none" style={{
+                    position: 'absolute',
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: 90,
+                    opacity: overlayOpacity,
+                  }}>
+                    <LinearGradient
+                      colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.25)', 'rgba(0,0,0,0.45)']}
+                      style={{ flex: 1 }}
+                      pointerEvents="none"
+                    />
+                  </RNAnimated.View>
+                  <RNAnimated.View style={{ alignItems: 'center', gap: 12, transform: [{ scale: avatarScale }] }}>
+                    <Image
+                      source={require('../assets/icon.png')}
+                      style={{ width: 72, height: 72, borderRadius: 20 }}
+                      resizeMode="contain"
+                    />
+                    <RNAnimated.View style={{ opacity: displayOpacity }}>
+                      <Text style={[styles.title, { fontSize: 28, fontWeight: '800', letterSpacing: 0.5 }]}>Keeper</Text>
+                    </RNAnimated.View>
+                  </RNAnimated.View>
+                </RNAnimated.View>
+              ) : (
+                <>
+                  <Text style={styles.title}>Keeper</Text>
+                  <Text style={styles.subtitle}>
+                    {mode === 'signIn'
+                      ? 'Güvenli notlarınıza erişin'
+                      : (signStep === 'pin'
+                          ? 'Şimdi 6 haneli PIN oluşturun'
+                          : 'E-posta ve isminizi girin')}
+                  </Text>
+                </>
+              )}
+
+              {mode === 'signIn' && biometricSupported && biometricEnrolled && biometricEnabled && !verificationMode ? (
+                <View style={styles.actionPillsRow}>
+                  <TouchableOpacity
+                    onPress={handleBiometricLogin}
+                    disabled={biometricLoading}
+                    style={[styles.pillButton, biometricLoading && styles.pillDisabled]}
+                  >
+                    {biometricLoading ? (
+                      <ActivityIndicator size="small" />
+                    ) : (
+                      <MaterialCommunityIcons name="fingerprint" size={20} color={theme.colors.primary} />
+                    )}
+                    <Text style={styles.pillText}>Biyometrik</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              {!(mode === 'signUp' && signStep === 'pin') ? (
+                <Input
+                  label="E-posta"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  keyboardType="email-address"
+                  autoCorrect={false}
+                  placeholder="ornek@mail.com"
+                  value={email}
+                  onChangeText={(value) => {
+                    setEmail(value);
+                    setPin('');
+                  }}
+                  autoFocus={signStep === 'email'}
+                  editable={signStep === 'email'}
+                  onFocus={() => setSignStep('email')}
+                  helper={mode === 'signIn' ? 'Devam etmek için e-postanı gir.' : (mode === 'signUp' && signStep === 'email' ? 'E-posta ve isminizi girin.' : undefined)}
+                />
+              ) : null}
+              {!!recentEmails.length && signStep === 'email' ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.emailChipsScroll} contentContainerStyle={{ gap: 8 }}>
+                  {recentEmails.map((em) => (
+                    <TouchableOpacity
+                      key={em}
+                      onPress={() => { setEmail(em); Haptics.selectionAsync(); focusHiddenPin(); }}
+                      style={styles.pillButton}
+                    >
+                      <Text style={styles.pillText}>{em}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              ) : null}
+
+              {mode === 'signUp' && signStep === 'email' ? (
+                <Input
+                  label="İsim"
+                  autoCapitalize="words"
+                  placeholder="Adınız"
+                  value={firstName}
+                  onChangeText={setFirstName}
+                />
+              ) : null}
+
+              {mode === 'signUp' && signStep === 'pin' ? (
+                <Animated.View entering={FadeInDown.duration(200)}>
+                  <RNAnimated.View
+                    style={{
+                      transform: [
+                        {
+                          translateX: shakeAnim.interpolate({ inputRange: [-1, 1], outputRange: [-7, 7] }),
+                        },
+                      ],
+                      gap: 14,
+                      alignItems: 'center',
+                    }}
+                  >
+                    {renderOtpBoxes(true)}
+                    <TextInput
+                      ref={hiddenPinInputRef}
+                      value={pin}
+                      onChangeText={handlePinChange}
+                      keyboardType="number-pad"
+                      secureTextEntry={true}
+                      showSoftInputOnFocus
+                      autoFocus
+                      style={{ position: 'absolute', opacity: 0.03, height: 50, width: 240, top: 0, left: 0 }}
+                      caretHidden
+                      importantForAutofill="no"
+                      contextMenuHidden
+                    />
+                  </RNAnimated.View>
+                </Animated.View>
+              ) : null}
+
+              {/* Eski 'Beni hatırla' kutusu kaldırıldı */}
+
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+              {info ? <Text style={styles.infoText}>{info}</Text> : null}
+
+              {!verificationMode ? (
+                <Button
+                  title={mode === 'signIn' ? (signStep === 'email' ? 'Devam' : 'Giriş Yap') : (signStep === 'email' ? 'Devam' : 'Kayıt Ol')}
+                  onPress={handleAuth}
+                  loading={loading}
+                />
+              ) : (
+                <Button title="Kod ile doğrula" onPress={handleVerifyCode} loading={verificationLoading} />
+              )}
+
+              {verificationMode ? (
+                <Button title="Kod gelmedi mi? Yeniden gönder" onPress={handleResendCode} variant="ghost" />
+              ) : (
+                <Button
+                  title={mode === 'signIn' ? 'Hesabın yok mu? Kayıt ol' : 'Zaten hesabın var mı? Giriş yap'}
+                  onPress={toggleMode}
+                  variant="ghost"
+                />
+              )}
+            </>
+          )}
+        </Card>
+        </RNAnimated.View>
+      </Animated.View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Screen>
+  );
+};
+
+export default AuthScreen;
+
