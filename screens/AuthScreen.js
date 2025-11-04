@@ -92,11 +92,11 @@ const AuthScreen = ({ onAuthSuccess }) => {
   const compressedHeader = useRef(new RNAnimated.Value(0)).current; // 0 normal, 1 compact
   // Header artık tamamen kaybolmasın: 0 -> normal, 1 -> kısmen sıkışmış
   const headerAnimatedStyle = {
-    height: compressedHeader.interpolate({ inputRange: [0,1], outputRange: [145, 105] }),
+    height: compressedHeader.interpolate({ inputRange: [0,1], outputRange: [140, 115] }),
     overflow: 'hidden',
   };
-  const avatarScale = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.85] });
-  const displayOpacity = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.7] });
+  const avatarScale = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.8] });
+  const displayOpacity = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.75] });
   // Header sıkıştığında arkaya koyu bir overlay + altta gradient ekle
   const overlayOpacity = compressedHeader.interpolate({ inputRange: [0, 0.0001, 1], outputRange: [0, 0, 0.65] });
 
@@ -601,44 +601,76 @@ const AuthScreen = ({ onAuthSuccess }) => {
 
   const renderOtpBoxes = (isSignUp) => {
     const chars = pin.split('');
-  const boxes = Array.from({ length: HANE_SAYISI }, (_, i) => {
-      const ch = chars[i] || '';
+    const boxes = Array.from({ length: HANE_SAYISI }, (_, i) => {
       const filled = i < chars.length;
-  const showChar = filled ? '●' : '';
       const isActive = chars.length === i && !pinErrorRef.current;
+      const hasError = pinErrorRef.current;
       
-      const baseStyle = {
-        width: 46,
-        height: 56,
-        borderRadius: 12,
-        borderWidth: 2,
-        borderColor: pinErrorRef.current ? theme.colors.danger : (isActive || filled ? theme.colors.primary : theme.colors.border),
-        backgroundColor: pinErrorRef.current ? theme.colors.danger + '08' : (isActive ? theme.colors.primary + '05' : theme.colors.surfaceElevated),
-        alignItems: 'center',
-        justifyContent: 'center',
-      };
+      // Basit stil mantığı
+      let borderColor = theme.colors.border;
+      let backgroundColor = theme.colors.surfaceElevated;
       
-      const successBg = successFlash.interpolate({ inputRange: [0, 1], outputRange: [baseStyle.backgroundColor, theme.colors.success + '22'] });
-      const errorBgOpacity = errorFlash.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
+      if (hasError) {
+        borderColor = theme.colors.danger;
+        backgroundColor = theme.colors.danger + '08';
+      } else if (filled) {
+        borderColor = theme.colors.primary;
+        backgroundColor = theme.colors.surfaceElevated;
+      } else if (isActive) {
+        borderColor = theme.colors.primary;
+        backgroundColor = theme.colors.surfaceElevated;
+      }
+      
+      const successBg = successFlash.interpolate({ 
+        inputRange: [0, 1], 
+        outputRange: [backgroundColor, theme.colors.success + '15'] 
+      });
+      
+      const errorBgOpacity = errorFlash.interpolate({ 
+        inputRange: [0, 1], 
+        outputRange: [0, 1] 
+      });
+      
       return (
         <RNAnimated.View
           key={i}
-          style={[
-            baseStyle,
-            {
-              backgroundColor: successBg,
-              shadowColor: isActive ? theme.colors.primary : 'transparent',
-              shadowOpacity: isActive ? 0.4 : 0,
-              shadowRadius: isActive ? 8 : 0,
-              shadowOffset: { width: 0, height: isActive ? 3 : 0 },
-              elevation: isActive ? 5 : 0,
-              transform: [{ scale: isActive ? 1.04 : 1 }],
-            },
-          ]}
+          style={{
+            width: 46,
+            height: 56,
+            borderRadius: 12,
+            borderWidth: 2,
+            borderColor: borderColor,
+            backgroundColor: successBg,
+            alignItems: 'center',
+            justifyContent: 'center',
+            // Sadece aktif kutuya glow
+            shadowColor: isActive ? theme.colors.primary : 'transparent',
+            shadowOpacity: isActive ? 0.3 : 0,
+            shadowRadius: isActive ? 6 : 0,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: isActive ? 4 : 0,
+          }}
         >
-          {/* Hata durumunda hafif kırmızı overlay */}
-          <RNAnimated.View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: theme.colors.danger, opacity: errorBgOpacity, borderRadius: 12 }} />
-          <Text style={{ fontSize: 24, fontWeight: '700', color: filled ? theme.colors.primary : theme.colors.muted }}>{showChar}</Text>
+          {/* Hata overlay */}
+          <RNAnimated.View 
+            pointerEvents="none" 
+            style={{ 
+              position: 'absolute', 
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: theme.colors.danger, 
+              opacity: errorBgOpacity, 
+              borderRadius: 10 
+            }} 
+          />
+          {/* Nokta sadece doluysa göster */}
+          {filled && (
+            <Text style={{ fontSize: 32, fontWeight: '700', color: theme.colors.text }}>
+              ●
+            </Text>
+          )}
         </RNAnimated.View>
       );
     });
@@ -993,7 +1025,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                     pointerEvents="none"
                   />
                 </RNAnimated.View>
-                <RNAnimated.View style={{ alignItems: 'center', gap: 10, transform: [{ scale: avatarScale }] }}>
+                <RNAnimated.View style={{ alignItems: 'center', gap: 8, transform: [{ scale: avatarScale }] }}>
                   <RNAnimated.View style={[styles.avatar, { width: 100, height: 100, borderRadius: 50 }]}>
                     {avatarUrl ? (
                       <>
@@ -1011,7 +1043,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                     )}
                   </RNAnimated.View>
                   <RNAnimated.View style={{ opacity: displayOpacity }}>
-                    <Text style={[styles.title, { fontSize: 20, fontWeight: '600', textAlign: 'center' }]}>
+                    <Text style={[styles.title, { fontSize: 17, fontWeight: '600', textAlign: 'center' }]}>
                       {getTimeBasedGreeting()}
                     </Text>
                   </RNAnimated.View>
@@ -1036,8 +1068,8 @@ const AuthScreen = ({ onAuthSuccess }) => {
               </View>
 
               {!verificationMode ? (
-                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 12 }}>
-                <View style={{ alignItems: 'center', gap: 6 }}>
+                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 10 }}>
+                <View style={{ alignItems: 'center', gap: 4 }}>
                   <Text style={{ fontSize: 14, color: theme.colors.textSecondary, textAlign: 'center', fontWeight: '500' }}>
                     PIN kodunuzu giriniz
                   </Text>
@@ -1245,7 +1277,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
               ) : null}
 
               {mode === 'signUp' && signStep === 'pin' ? (
-                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 12 }}>
+                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 10 }}>
                   <RNAnimated.View
                     style={{
                       transform: [
