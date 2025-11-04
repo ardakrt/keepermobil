@@ -606,9 +606,9 @@ const AuthScreen = ({ onAuthSuccess }) => {
       const filled = i < chars.length;
   const showChar = filled ? '●' : '';
       const baseStyle = {
-        width: 52,
-        height: 64,
-        borderRadius: 14,
+        width: 46,
+        height: 56,
+        borderRadius: 12,
         borderWidth: 2,
         borderColor: pinErrorRef.current ? theme.colors.danger : (filled ? theme.colors.primary : theme.colors.border),
         backgroundColor: pinErrorRef.current ? theme.colors.danger + '08' : (filled ? theme.colors.primary + '08' : theme.colors.surfaceElevated),
@@ -640,8 +640,8 @@ const AuthScreen = ({ onAuthSuccess }) => {
           ]}
         >
           {/* Hata durumunda hafif kırmızı overlay */}
-          <RNAnimated.View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: theme.colors.danger, opacity: errorBgOpacity, borderRadius: 14 }} />
-          <Text style={{ fontSize: 28, fontWeight: '700', color: filled ? theme.colors.primary : theme.colors.muted }}>{showChar}</Text>
+          <RNAnimated.View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: theme.colors.danger, opacity: errorBgOpacity, borderRadius: 12 }} />
+          <Text style={{ fontSize: 24, fontWeight: '700', color: filled ? theme.colors.primary : theme.colors.muted }}>{showChar}</Text>
         </RNAnimated.View>
       );
     });
@@ -653,7 +653,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
         accessibilityLabel={isSignUp ? 'PIN gir' : 'Şifre gir'}
         accessibilityRole="button"
       >
-        <View style={{ flexDirection: 'row', gap: 10 }}>{boxes}</View>
+        <View style={{ flexDirection: 'row', gap: 8 }}>{boxes}</View>
       </Pressable>
     );
   };
@@ -1024,13 +1024,10 @@ const AuthScreen = ({ onAuthSuccess }) => {
               </View>
 
               {!verificationMode ? (
-                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 20 }}>
-                <View style={{ alignItems: 'center', gap: 8 }}>
-                  <Text style={[styles.pinLabel, { fontSize: 14, fontWeight: '700', letterSpacing: 1.2 }]}>
-                    6 HANELİ ŞİFRE
-                  </Text>
-                  <Text style={{ fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center' }}>
-                    Devam etmek için şifrenizi girin
+                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 16 }}>
+                <View style={{ alignItems: 'center', gap: 6 }}>
+                  <Text style={{ fontSize: 14, color: theme.colors.textSecondary, textAlign: 'center', fontWeight: '500' }}>
+                    Devam etmek için pininizi girin
                   </Text>
                 </View>
                 <RNAnimated.View
@@ -1040,7 +1037,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                         translateX: shakeAnim.interpolate({ inputRange: [-1, 1], outputRange: [-7, 7] }),
                       },
                     ],
-                    gap: 18,
+                    gap: 14,
                     alignItems: 'center',
                   }}
                 >
@@ -1080,7 +1077,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                   disabled={forgotCooldown > 0}
                 >
                   <Text style={[styles.forgotLink, { fontSize: 14, fontWeight: '600' }, forgotCooldown > 0 && { opacity: 0.6 }]}>
-                    {forgotCooldown > 0 ? `⏱️ Tekrar dene: ${forgotCooldown}s` : '🔑 Şifremi unuttum'}
+                    {forgotCooldown > 0 ? `⏱️ Tekrar dene: ${forgotCooldown}s` : 'Şifremi unuttum'}
                   </Text>
                 </TouchableOpacity>
                 {/* "Beni hatırla" kaldırıldı; yalnızca e-posta otomatik saklanıyor */}
@@ -1169,7 +1166,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                     {mode === 'signIn'
                       ? 'Güvenli notlarınıza erişin'
                       : (signStep === 'pin'
-                          ? 'Şimdi 6 haneli PIN oluşturun'
+                          ? '6 haneli PIN oluşturun'
                           : 'E-posta ve isminizi girin')}
                   </Text>
                 </>
@@ -1236,15 +1233,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
               ) : null}
 
               {mode === 'signUp' && signStep === 'pin' ? (
-                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 20 }}>
-                  <View style={{ alignItems: 'center', gap: 8 }}>
-                    <Text style={[styles.pinLabel, { fontSize: 14, fontWeight: '700', letterSpacing: 1.2 }]}>
-                      6 HANELİ ŞİFRE OLUŞTUR
-                    </Text>
-                    <Text style={{ fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center' }}>
-                      Hesabınızı güvende tutmak için şifre belirleyin
-                    </Text>
-                  </View>
+                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 16 }}>
                   <RNAnimated.View
                     style={{
                       transform: [
@@ -1252,7 +1241,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                           translateX: shakeAnim.interpolate({ inputRange: [-1, 1], outputRange: [-7, 7] }),
                         },
                       ],
-                      gap: 18,
+                      gap: 14,
                       alignItems: 'center',
                     }}
                   >
