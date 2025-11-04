@@ -92,11 +92,11 @@ const AuthScreen = ({ onAuthSuccess }) => {
   const compressedHeader = useRef(new RNAnimated.Value(0)).current; // 0 normal, 1 compact
   // Header artık tamamen kaybolmasın: 0 -> normal, 1 -> kısmen sıkışmış
   const headerAnimatedStyle = {
-    height: compressedHeader.interpolate({ inputRange: [0,1], outputRange: [150, 120] }),
+    height: compressedHeader.interpolate({ inputRange: [0,1], outputRange: [150, 110] }),
     overflow: 'hidden',
   };
   const avatarScale = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.85] });
-  const displayOpacity = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.8] });
+  const displayOpacity = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0] });
   // Header sıkıştığında arkaya koyu bir overlay + altta gradient ekle
   const overlayOpacity = compressedHeader.interpolate({ inputRange: [0, 0.0001, 1], outputRange: [0, 0, 0.65] });
 
@@ -1025,7 +1025,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                     pointerEvents="none"
                   />
                 </RNAnimated.View>
-                <RNAnimated.View style={{ alignItems: 'center', gap: 12, transform: [{ scale: avatarScale }] }}>
+                <RNAnimated.View style={{ alignItems: 'center', gap: 8, transform: [{ scale: avatarScale }] }}>
                   <RNAnimated.View style={[
                     styles.avatar, 
                     { 
@@ -1056,7 +1056,12 @@ const AuthScreen = ({ onAuthSuccess }) => {
                       <Text style={[styles.avatarText, { fontSize: 32 }]}>{(firstName?.[0] || getInitialsFromEmail(email)).toUpperCase()}</Text>
                     )}
                   </RNAnimated.View>
-                  <RNAnimated.View style={{ opacity: displayOpacity, paddingHorizontal: 20 }}>
+                  <RNAnimated.View style={{ 
+                    opacity: displayOpacity, 
+                    paddingHorizontal: 20,
+                    height: displayOpacity.interpolate({ inputRange: [0, 1], outputRange: [0, 30] }),
+                    overflow: 'hidden',
+                  }}>
                     <Text style={{ 
                       fontSize: 18, 
                       fontWeight: '500', 
