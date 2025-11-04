@@ -380,7 +380,7 @@ const SettingsScreen = () => {
       <View style={styles.customHeader}>
         <View style={styles.keeperTitle}>
           <View style={styles.keeperIcon}>
-            <MaterialCommunityIcons name="shield-lock" size={22} color={theme.colors.primary} />
+            <MaterialCommunityIcons name="cog" size={22} color={theme.colors.primary} />
           </View>
           <Text style={styles.keeperText}>Keeper</Text>
         </View>

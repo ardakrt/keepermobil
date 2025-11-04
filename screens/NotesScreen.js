@@ -905,7 +905,7 @@ const NotesScreen = ({ navigation, route }) => {
       <View style={styles.customHeader}>
         <View style={styles.keeperTitle}>
           <View style={styles.keeperIcon}>
-            <MaterialCommunityIcons name="shield-lock" size={22} color={theme.colors.primary} />
+            <MaterialCommunityIcons name="note-text" size={22} color={theme.colors.primary} />
           </View>
           <Text style={styles.keeperText}>Keeper</Text>
         </View>
