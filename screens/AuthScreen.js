@@ -506,7 +506,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
 
       if (!data.session) {
         setVerificationMode(true);
-        setInfo('E-posta kutuna gelen 6 haneli kodu girerek hesabını doğrula.');
+        setInfo('E-posta adresinize gönderilen 6 haneli doğrulama kodunu giriniz.');
         return;
       }
 
@@ -682,7 +682,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
 
       setVerificationMode(false);
       setVerificationCode('');
-      setInfo('Hesabın doğrulandı.');
+      setInfo('Hesabınız başarıyla doğrulandı.');
 
       await finalizeAuth(data.session);
     } catch (err) {
@@ -803,7 +803,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
       await supabase.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: getResetRedirectURL(),
       });
-      setInfo('E-posta kutunu kontrol et. Parola sıfırlama bağlantısı gönderildi.');
+      setInfo('E-posta adresinize PIN sıfırlama bağlantısı gönderildi. Lütfen kontrol ediniz.');
       if (typeof setForgotCooldown === 'function') setForgotCooldown(60);
     } catch (err) {
       setError(err.message ?? 'Parola sıfırlama başlatılamadı.');
@@ -1000,7 +1000,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                   </RNAnimated.View>
                   <RNAnimated.View style={{ opacity: displayOpacity }}>
                     <Text style={[styles.title, { fontSize: 22, fontWeight: '600', textAlign: 'center' }]}>
-                      Hoş geldin, {getDisplayName()}!
+                      Hoş geldiniz, {getDisplayName()}
                     </Text>
                   </RNAnimated.View>
                 </RNAnimated.View>
@@ -1018,7 +1018,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                     ) : (
                       <MaterialCommunityIcons name="fingerprint" size={20} color={theme.colors.primary} />
                     )}
-                    <Text style={styles.pillText}>Biyometrik</Text>
+                    <Text style={styles.pillText}>Biyometrik Giriş</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -1027,7 +1027,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                 <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 16 }}>
                 <View style={{ alignItems: 'center', gap: 6 }}>
                   <Text style={{ fontSize: 14, color: theme.colors.textSecondary, textAlign: 'center', fontWeight: '500' }}>
-                    Devam etmek için pininizi girin
+                    PIN kodunuzu giriniz
                   </Text>
                 </View>
                 <RNAnimated.View
@@ -1064,7 +1064,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                         alignItems: 'center'
                       }}>
                         <Text style={{ color: theme.colors.danger, fontWeight: '700', fontSize: 14 }}>
-                          🔒 Kilitli: {lockRemaining} saniye
+                          🔒 Giriş kilitlendi: {lockRemaining} saniye
                         </Text>
                       </View>
                     ) : null}
@@ -1077,7 +1077,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                   disabled={forgotCooldown > 0}
                 >
                   <Text style={[styles.forgotLink, { fontSize: 14, fontWeight: '600' }, forgotCooldown > 0 && { opacity: 0.6 }]}>
-                    {forgotCooldown > 0 ? `⏱️ Tekrar dene: ${forgotCooldown}s` : 'Şifremi unuttum'}
+                    {forgotCooldown > 0 ? `⏱️ Tekrar deneyiniz: ${forgotCooldown}s` : 'PIN kodumu unuttum'}
                   </Text>
                 </TouchableOpacity>
                 {/* "Beni hatırla" kaldırıldı; yalnızca e-posta otomatik saklanıyor */}
@@ -1164,10 +1164,10 @@ const AuthScreen = ({ onAuthSuccess }) => {
                   <Text style={styles.title}>Keeper</Text>
                   <Text style={styles.subtitle}>
                     {mode === 'signIn'
-                      ? 'Güvenli notlarınıza erişin'
+                      ? 'Hesabınıza güvenli erişim'
                       : (signStep === 'pin'
-                          ? '6 haneli PIN oluşturun'
-                          : 'E-posta ve isminizi girin')}
+                          ? '6 Haneli PIN Kodu Belirleyin'
+                          : 'Hesap oluşturmak için bilgilerinizi giriniz')}
                   </Text>
                 </>
               )}
@@ -1184,14 +1184,14 @@ const AuthScreen = ({ onAuthSuccess }) => {
                     ) : (
                       <MaterialCommunityIcons name="fingerprint" size={20} color={theme.colors.primary} />
                     )}
-                    <Text style={styles.pillText}>Biyometrik</Text>
+                    <Text style={styles.pillText}>Biyometrik Giriş</Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
 
               {!(mode === 'signUp' && signStep === 'pin') ? (
                 <Input
-                  label="E-posta"
+                  label="E-posta Adresi"
                   autoCapitalize="none"
                   autoComplete="email"
                   keyboardType="email-address"
@@ -1205,7 +1205,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                   autoFocus={signStep === 'email'}
                   editable={signStep === 'email'}
                   onFocus={() => setSignStep('email')}
-                  helper={mode === 'signIn' ? 'Devam etmek için e-postanı gir.' : (mode === 'signUp' && signStep === 'email' ? 'E-posta ve isminizi girin.' : undefined)}
+                  helper={mode === 'signIn' ? 'E-posta adresinizi giriniz' : undefined}
                 />
               ) : null}
               {!!recentEmails.length && signStep === 'email' ? (
@@ -1224,9 +1224,9 @@ const AuthScreen = ({ onAuthSuccess }) => {
 
               {mode === 'signUp' && signStep === 'email' ? (
                 <Input
-                  label="İsim"
+                  label="Ad Soyad"
                   autoCapitalize="words"
-                  placeholder="Adınız"
+                  placeholder="Ad Soyad"
                   value={firstName}
                   onChangeText={setFirstName}
                 />
@@ -1270,19 +1270,19 @@ const AuthScreen = ({ onAuthSuccess }) => {
 
               {!verificationMode ? (
                 <Button
-                  title={mode === 'signIn' ? (signStep === 'email' ? 'Devam' : 'Giriş Yap') : (signStep === 'email' ? 'Devam' : 'Kayıt Ol')}
+                  title={mode === 'signIn' ? (signStep === 'email' ? 'Devam Et' : 'Giriş Yap') : (signStep === 'email' ? 'Devam Et' : 'Hesap Oluştur')}
                   onPress={handleAuth}
                   loading={loading}
                 />
               ) : (
-                <Button title="Kod ile doğrula" onPress={handleVerifyCode} loading={verificationLoading} />
+                <Button title="Doğrulama Kodunu Onayla" onPress={handleVerifyCode} loading={verificationLoading} />
               )}
 
               {verificationMode ? (
-                <Button title="Kod gelmedi mi? Yeniden gönder" onPress={handleResendCode} variant="ghost" />
+                <Button title="Kodu Tekrar Gönder" onPress={handleResendCode} variant="ghost" />
               ) : (
                 <Button
-                  title={mode === 'signIn' ? 'Hesabın yok mu? Kayıt ol' : 'Zaten hesabın var mı? Giriş yap'}
+                  title={mode === 'signIn' ? 'Hesabınız yok mu? Kayıt olun' : 'Zaten hesabınız var mı? Giriş yapın'}
                   onPress={toggleMode}
                   variant="ghost"
                 />
