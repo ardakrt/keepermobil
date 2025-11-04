@@ -604,20 +604,23 @@ const AuthScreen = ({ onAuthSuccess }) => {
   const boxes = Array.from({ length: HANE_SAYISI }, (_, i) => {
       const ch = chars[i] || '';
       const filled = i < chars.length;
-  const showChar = filled ? '•' : '';
+  const showChar = filled ? '●' : '';
       const baseStyle = {
-        width: 46,
-        height: 56,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: pinErrorRef.current ? theme.colors.danger : theme.colors.border,
-        backgroundColor: pinErrorRef.current ? theme.colors.danger + '10' : theme.colors.surface,
+        width: 52,
+        height: 64,
+        borderRadius: 14,
+        borderWidth: 2,
+        borderColor: pinErrorRef.current ? theme.colors.danger : (filled ? theme.colors.primary : theme.colors.border),
+        backgroundColor: pinErrorRef.current ? theme.colors.danger + '08' : (filled ? theme.colors.primary + '08' : theme.colors.surfaceElevated),
         alignItems: 'center',
         justifyContent: 'center',
       };
-      const focusBorder = chars.length === i && !pinErrorRef.current ? { borderColor: theme.colors.primary } : null;
+      const focusBorder = chars.length === i && !pinErrorRef.current ? { 
+        borderColor: theme.colors.primary,
+        borderWidth: 2.5,
+      } : null;
       const isActive = chars.length === i && !pinErrorRef.current;
-      const successBg = successFlash.interpolate({ inputRange: [0, 1], outputRange: [baseStyle.backgroundColor, theme.colors.success + '33'] });
+      const successBg = successFlash.interpolate({ inputRange: [0, 1], outputRange: [baseStyle.backgroundColor, theme.colors.success + '22'] });
       const errorBgOpacity = errorFlash.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
       return (
         <RNAnimated.View
@@ -627,18 +630,18 @@ const AuthScreen = ({ onAuthSuccess }) => {
             focusBorder,
             {
               backgroundColor: successBg,
-              shadowColor: isActive ? theme.colors.primary : 'transparent',
-              shadowOpacity: isActive ? 0.35 : 0,
-              shadowRadius: isActive ? 6 : 0,
-              shadowOffset: { width: 0, height: 2 },
-              elevation: isActive ? 4 : 0,
-              transform: [{ scale: isActive ? 1.04 : 1 }],
+              shadowColor: isActive ? theme.colors.primary : (filled ? theme.colors.primary : 'transparent'),
+              shadowOpacity: isActive ? 0.45 : (filled ? 0.15 : 0),
+              shadowRadius: isActive ? 10 : (filled ? 4 : 0),
+              shadowOffset: { width: 0, height: isActive ? 4 : 2 },
+              elevation: isActive ? 6 : (filled ? 2 : 0),
+              transform: [{ scale: isActive ? 1.06 : (filled ? 1.02 : 1) }],
             },
           ]}
         >
           {/* Hata durumunda hafif kırmızı overlay */}
-          <RNAnimated.View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: theme.colors.danger, opacity: errorBgOpacity, borderRadius: 10 }} />
-          <Text style={{ fontSize: 20, fontWeight: '600', color: theme.colors.text }}>{showChar}</Text>
+          <RNAnimated.View pointerEvents="none" style={{ position: 'absolute', inset: 0, backgroundColor: theme.colors.danger, opacity: errorBgOpacity, borderRadius: 14 }} />
+          <Text style={{ fontSize: 28, fontWeight: '700', color: filled ? theme.colors.primary : theme.colors.muted }}>{showChar}</Text>
         </RNAnimated.View>
       );
     });
@@ -1021,8 +1024,15 @@ const AuthScreen = ({ onAuthSuccess }) => {
               </View>
 
               {!verificationMode ? (
-                <Animated.View entering={FadeInDown.duration(200)}>
-                <Text style={styles.pinLabel}>Şifre</Text>
+                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 20 }}>
+                <View style={{ alignItems: 'center', gap: 8 }}>
+                  <Text style={[styles.pinLabel, { fontSize: 14, fontWeight: '700', letterSpacing: 1.2 }]}>
+                    6 HANELİ ŞİFRE
+                  </Text>
+                  <Text style={{ fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center' }}>
+                    Devam etmek için şifrenizi girin
+                  </Text>
+                </View>
                 <RNAnimated.View
                   style={{
                     transform: [
@@ -1030,7 +1040,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                         translateX: shakeAnim.interpolate({ inputRange: [-1, 1], outputRange: [-7, 7] }),
                       },
                     ],
-                    gap: 14,
+                    gap: 18,
                     alignItems: 'center',
                   }}
                 >
@@ -1042,21 +1052,35 @@ const AuthScreen = ({ onAuthSuccess }) => {
                     keyboardType="number-pad"
                     secureTextEntry={true}
                     showSoftInputOnFocus
-                    style={{ position: 'absolute', opacity: 0.03, height: 50, width: 240, top: 0, left: 0 }}
+                    style={{ position: 'absolute', opacity: 0.03, height: 50, width: 300, top: 0, left: 0 }}
                     caretHidden
                     importantForAutofill="no"
                     contextMenuHidden
                   />
                   <View style={{ alignSelf: 'stretch', minHeight: 0 }}>
                     {lockUntil ? (
-                      <Text style={{ color: theme.colors.danger, fontWeight: '600', marginTop: 12 }}>Kilitli: {lockRemaining}s</Text>
+                      <View style={{ 
+                        backgroundColor: theme.colors.danger + '15',
+                        borderRadius: 10,
+                        paddingVertical: 10,
+                        paddingHorizontal: 16,
+                        alignItems: 'center'
+                      }}>
+                        <Text style={{ color: theme.colors.danger, fontWeight: '700', fontSize: 14 }}>
+                          🔒 Kilitli: {lockRemaining} saniye
+                        </Text>
+                      </View>
                     ) : null}
                   </View>
                   {/* Gizli input yukarı taşındı */}
                 </RNAnimated.View>
-                <TouchableOpacity style={styles.forgotWrap} onPress={handleForgotPassword} disabled={forgotCooldown > 0}>
-                  <Text style={[styles.forgotLink, forgotCooldown > 0 && { opacity: 0.6 }]}>
-                    {forgotCooldown > 0 ? `Tekrar dene: ${forgotCooldown}s` : 'Şifreni mi unuttun?'}
+                <TouchableOpacity 
+                  style={[styles.forgotWrap, { alignSelf: 'center', paddingVertical: 12 }]} 
+                  onPress={handleForgotPassword} 
+                  disabled={forgotCooldown > 0}
+                >
+                  <Text style={[styles.forgotLink, { fontSize: 14, fontWeight: '600' }, forgotCooldown > 0 && { opacity: 0.6 }]}>
+                    {forgotCooldown > 0 ? `⏱️ Tekrar dene: ${forgotCooldown}s` : '🔑 Şifremi unuttum'}
                   </Text>
                 </TouchableOpacity>
                 {/* "Beni hatırla" kaldırıldı; yalnızca e-posta otomatik saklanıyor */}
@@ -1212,7 +1236,15 @@ const AuthScreen = ({ onAuthSuccess }) => {
               ) : null}
 
               {mode === 'signUp' && signStep === 'pin' ? (
-                <Animated.View entering={FadeInDown.duration(200)}>
+                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 20 }}>
+                  <View style={{ alignItems: 'center', gap: 8 }}>
+                    <Text style={[styles.pinLabel, { fontSize: 14, fontWeight: '700', letterSpacing: 1.2 }]}>
+                      6 HANELİ ŞİFRE OLUŞTUR
+                    </Text>
+                    <Text style={{ fontSize: 13, color: theme.colors.textSecondary, textAlign: 'center' }}>
+                      Hesabınızı güvende tutmak için şifre belirleyin
+                    </Text>
+                  </View>
                   <RNAnimated.View
                     style={{
                       transform: [
@@ -1220,7 +1252,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                           translateX: shakeAnim.interpolate({ inputRange: [-1, 1], outputRange: [-7, 7] }),
                         },
                       ],
-                      gap: 14,
+                      gap: 18,
                       alignItems: 'center',
                     }}
                   >
@@ -1233,7 +1265,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                       secureTextEntry={true}
                       showSoftInputOnFocus
                       autoFocus
-                      style={{ position: 'absolute', opacity: 0.03, height: 50, width: 240, top: 0, left: 0 }}
+                      style={{ position: 'absolute', opacity: 0.03, height: 50, width: 300, top: 0, left: 0 }}
                       caretHidden
                       importantForAutofill="no"
                       contextMenuHidden
