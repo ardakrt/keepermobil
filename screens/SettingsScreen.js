@@ -9,10 +9,10 @@ import {
   Alert,
   StatusBar,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import Animated, { FadeInDown, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabaseClient';
@@ -45,6 +45,20 @@ const SettingsScreen = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [session, setSession] = useState(null);
+  const opacity = useSharedValue(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      opacity.value = withTiming(1, { duration: 500 });
+      return () => {
+        opacity.value = withTiming(0, { duration: 250 });
+      };
+    }, [])
+  );
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
 
   const [loading, setLoading] = useState(true);
   const [biometricSupported, setBiometricSupported] = useState(false);
@@ -373,7 +387,7 @@ const SettingsScreen = () => {
   );
 
   return (
-    <View style={styles.container}>
+    <Animated.View style={[styles.container, animatedStyle]}>
       <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
 
       {/* Custom Header */}
@@ -639,7 +653,7 @@ const SettingsScreen = () => {
           </TouchableOpacity>
         </Animated.View>
       </ScrollView>
-    </View>
+    </Animated.View>
   );
 };
 
