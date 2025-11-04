@@ -1,39 +1,37 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Modal,
   Platform,
   ScrollView,
-  FlatList,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  TouchableWithoutFeedback,
   Pressable,
   BackHandler,
   Dimensions,
   PanResponder,
   StatusBar,
+  KeyboardAvoidingView,
+  FlatList,
 } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import Animated, {
-  FadeInDown,
-  FadeOutUp,
   FadeIn,
   FadeOut,
-  Layout,
   useSharedValue,
   useAnimatedStyle,
   withTiming,
   withSpring,
-  runOnJS
+  runOnJS,
 } from 'react-native-reanimated';
 import { Easing } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useAppTheme } from '../lib/theme';
 import { useConfirm } from '../lib/confirm';
 import { useToast } from '../lib/toast';
@@ -41,6 +39,7 @@ import { useBadges } from '../lib/badges';
 import { usePrefs } from '../lib/prefs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
+import SwipeableReminderCard from '../components/SwipeableReminderCard';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabaseClient';
 import {
@@ -55,44 +54,73 @@ import {
   requestNotificationPermissions,
 } from '../lib/notificationService';
 
-// Relative time formatter
-const getRelativeTime = (date) => {
-  if (!date) return 'Tarih ayarlanmadı';
-  const now = new Date();
-  const target = new Date(date);
-  const diffMs = target - now;
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMs < 0) {
-    const absMins = Math.abs(diffMins);
-    const absHours = Math.abs(diffHours);
-    const absDays = Math.abs(diffDays);
-
-    if (absMins < 60) return `${absMins} dakika önce`;
-    if (absHours < 24) return `${absHours} saat önce`;
-    return `${absDays} gün önce`;
-  }
-
-  if (diffMins < 60) return `${diffMins} dakika sonra`;
-  if (diffHours < 24) return `${diffHours} saat sonra`;
-  if (diffDays < 7) return `${diffDays} gün sonra`;
-
-  return target.toLocaleDateString('tr-TR', {
-    day: 'numeric',
-    month: 'long',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-};
-
 const formatDateTime = (value) => {
   if (!value) return 'Tarih ayarlanmadı';
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return 'Tarih ayarlanmadı';
   return date.toLocaleString('tr-TR');
 };
+
+const ITEM_HEIGHT = 34;
+const VISIBLE_COUNT = 5;
+
+const WheelItem = React.memo(({ item, index, selectedIndex, formatItem, theme }) => (
+  <View style={{ height: ITEM_HEIGHT, alignItems: 'center', justifyContent: 'center' }}>
+    <Text style={{ color: index === selectedIndex ? theme.colors.text : theme.colors.textSecondary, fontWeight: index === selectedIndex ? '700' : '400' }}>
+      {formatItem ? formatItem(item, index) : item}
+    </Text>
+  </View>
+));
+
+const WheelColumn = React.memo(({ data, selectedIndex, onSelect, width, formatItem, theme }) => {
+  const listRef = useRef(null);
+  const topBottomPad = ((VISIBLE_COUNT - 1) / 2) * ITEM_HEIGHT;
+
+  useEffect(() => {
+    if (listRef.current && typeof selectedIndex === 'number' && selectedIndex >= 0) {
+      listRef.current.scrollToOffset({ offset: selectedIndex * ITEM_HEIGHT, animated: false });
+    }
+  }, [selectedIndex]);
+
+  const onEnd = useCallback((e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    let idx = Math.round(y / ITEM_HEIGHT);
+    if (idx < 0) idx = 0;
+    if (idx > data.length - 1) idx = data.length - 1;
+    if (listRef.current) {
+      listRef.current.scrollToOffset({ offset: idx * ITEM_HEIGHT, animated: true });
+    }
+    if (idx !== selectedIndex) onSelect?.(idx);
+  }, [data.length, onSelect, selectedIndex]);
+
+  const renderItem = useCallback(({ item, index }) => (
+    <WheelItem item={item} index={index} selectedIndex={selectedIndex} formatItem={formatItem} theme={theme} />
+  ), [selectedIndex, formatItem, theme]);
+
+  const keyExtractor = useCallback((item, idx) => `${item}-${idx}`, []);
+
+  return (
+    <View style={[{ height: ITEM_HEIGHT * VISIBLE_COUNT, overflow: 'hidden' }, width ? { width } : { flex: 1 }]}>
+      <View style={{ position: 'absolute', top: (ITEM_HEIGHT * VISIBLE_COUNT) / 2 - ITEM_HEIGHT / 2, left: 0, right: 0, height: ITEM_HEIGHT, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.border, zIndex: 1 }} />
+      <FlatList
+        ref={listRef}
+        data={data}
+        keyExtractor={keyExtractor}
+        showsVerticalScrollIndicator={false}
+        onMomentumScrollEnd={onEnd}
+        onScrollEndDrag={onEnd}
+        getItemLayout={(_, index) => ({ length: ITEM_HEIGHT, offset: ITEM_HEIGHT * index, index })}
+        ListHeaderComponent={<View style={{ height: topBottomPad }} />}
+        ListFooterComponent={<View style={{ height: topBottomPad }} />}
+        renderItem={renderItem}
+        removeClippedSubviews
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={50}
+        windowSize={11}
+      />
+    </View>
+  );
+});
 
 const RemindersScreen = () => {
   const { theme, accent } = useAppTheme();
@@ -119,10 +147,20 @@ const RemindersScreen = () => {
   const { setCount } = useBadges();
   const [reminders, setReminders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [error, setError] = useState('');
+
+  // Filter state
+  const [filter, setFilter] = useState('active'); // 'all', 'active', 'completed'
+
+  // Quick actions FAB menu
+  const [showQuickMenu, setShowQuickMenu] = useState(false);
+  const quickMenuScale = useSharedValue(1);
+  const quickMenuOpacity = useSharedValue(0);
+  const quickMenuBackdropOpacity = useSharedValue(0);
 
   const [newTitle, setNewTitle] = useState('');
   const [newDueDate, setNewDueDate] = useState(() => {
@@ -138,77 +176,73 @@ const RemindersScreen = () => {
   const [editingDueDate, setEditingDueDate] = useState(new Date());
 
   const [showBottomSheet, setShowBottomSheet] = useState(false);
-  const [sheetMode, setSheetMode] = useState('add'); // 'add' | 'edit'
-  const [showIOSPicker, setShowIOSPicker] = useState(false);
-  const [pickerTarget, setPickerTarget] = useState('new');
-  const [iosPickerDate, setIosPickerDate] = useState(new Date());
-  const [androidPickerStep, setAndroidPickerStep] = useState('date');
+  const [sheetMode, setSheetMode] = useState('add'); // 'add' | 'edit' | 'quick'
+  const [quickTemplate, setQuickTemplate] = useState(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [pickerDate, setPickerDate] = useState(new Date());
+  const [pickerStep, setPickerStep] = useState('date'); // 'date' | 'time'
 
-  const screenH = Dimensions.get('window').height;
-  const SHEET_HEIGHT = Math.min(560, Math.max(420, Math.floor(screenH * 0.75)));
-  const translateY = useSharedValue(SHEET_HEIGHT);
-  const backdropOpacity = useSharedValue(0);
+  const sheetScale = useSharedValue(1);
   const sheetOpacity = useSharedValue(0);
-  const sheetScale = useSharedValue(0.96);
+  const backdropOpacity = useSharedValue(0);
 
   const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: translateY.value }, { scale: sheetScale.value }],
+    opacity: sheetOpacity.value,
   }));
 
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: backdropOpacity.value,
   }));
 
-  const sheetOpacityStyle = useAnimatedStyle(() => ({
-    opacity: sheetOpacity.value,
+  const quickMenuStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: quickMenuScale.value }],
+    opacity: quickMenuOpacity.value,
   }));
 
-  const animateOpen = () => {
-    const dur = reduceMotion ? 120 : 280;
-    const ease = reduceMotion ? Easing.linear : Easing.bezier(0.0, 0.0, 0.2, 1);
-    backdropOpacity.value = withTiming(1, { duration: dur, easing: ease });
-    sheetOpacity.value = withTiming(1, { duration: dur, easing: ease });
-    sheetScale.value = withTiming(1, { duration: dur, easing: ease });
-    translateY.value = withTiming(0, { duration: dur, easing: ease });
+  const quickMenuBackdropStyle = useAnimatedStyle(() => ({
+    opacity: quickMenuBackdropOpacity.value,
+  }));
+
+  const animateSheetOpen = () => {
+    backdropOpacity.value = withTiming(1, { duration: 150 });
+    sheetOpacity.value = withTiming(1, { duration: 150 });
+    sheetScale.value = withTiming(1, { duration: 150 });
   };
 
-  const animateClose = (cb) => {
-    const dur = reduceMotion ? 100 : 220;
-    const ease = reduceMotion ? Easing.linear : Easing.bezier(0.4, 0.0, 1, 1);
-    backdropOpacity.value = withTiming(0, { duration: dur, easing: ease });
-    sheetOpacity.value = withTiming(0, { duration: dur, easing: ease });
-    sheetScale.value = withTiming(0.96, { duration: dur, easing: ease });
-    translateY.value = withTiming(SHEET_HEIGHT, { duration: dur, easing: ease }, () => {
+  const animateSheetClose = (cb) => {
+    backdropOpacity.value = withTiming(0, { duration: 150 });
+    sheetOpacity.value = withTiming(0, { duration: 150 });
+    sheetScale.value = withTiming(1, { duration: 150 }, () => {
+      if (cb) runOnJS(cb)();
+    });
+  };
+
+  const animateQuickMenuOpen = () => {
+    quickMenuBackdropOpacity.value = withTiming(1, { duration: 150 });
+    quickMenuOpacity.value = withTiming(1, { duration: 150 });
+    quickMenuScale.value = withTiming(1, { duration: 150 });
+  };
+
+  const animateQuickMenuClose = (cb) => {
+    quickMenuBackdropOpacity.value = withTiming(0, { duration: 150 });
+    quickMenuOpacity.value = withTiming(0, { duration: 150 });
+    quickMenuScale.value = withTiming(1, { duration: 150 }, () => {
       if (cb) runOnJS(cb)();
     });
   };
 
   useEffect(() => {
-    if (showIOSPicker) {
-      translateY.value = SHEET_HEIGHT;
-      sheetOpacity.value = 0;
-      sheetScale.value = 0.96;
-      requestAnimationFrame(() => animateOpen());
+    if (showQuickMenu) {
+      quickMenuBackdropOpacity.value = 0;
+      quickMenuOpacity.value = 0;
+      quickMenuScale.value = 1;
+      animateQuickMenuOpen();
+    } else {
+      quickMenuBackdropOpacity.value = 0;
+      quickMenuOpacity.value = 0;
+      quickMenuScale.value = 1;
     }
-  }, [SHEET_HEIGHT, showIOSPicker, translateY]);
-
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_evt, gs) => Math.abs(gs.dy) > 6,
-      onPanResponderMove: (_evt, gs) => {
-        if (gs.dy > 0) translateY.value = gs.dy;
-      },
-      onPanResponderRelease: (_evt, gs) => {
-        const shouldClose = gs.dy > SHEET_HEIGHT * 0.2 || gs.vy > 1.0;
-        if (shouldClose) {
-          animateClose(() => setShowIOSPicker(false));
-        } else {
-          animateOpen();
-        }
-      },
-      onPanResponderTerminate: () => animateOpen(),
-    })
-  ).current;
+  }, [showQuickMenu]);
 
   const [notificationMap, setNotificationMap] = useState({});
   const notificationMapRef = useRef({});
@@ -226,109 +260,6 @@ const RemindersScreen = () => {
     return d;
   };
 
-  const nextAt = (hour, minute) => {
-    const n = now();
-    const d = new Date(n);
-    d.setHours(hour, minute, 0, 0);
-    if (d <= n) d.setDate(d.getDate() + 1);
-    return d;
-  };
-
-  const addHours = (h) => {
-    const d = now();
-    d.setHours(d.getHours() + h);
-    d.setSeconds(0, 0);
-    return d;
-  };
-
-  const daysInMonth = (year, month) => new Date(year, month, 0).getDate();
-
-  const setYMD = (base, year, month, day) => {
-    const nd = new Date(base);
-    nd.setSeconds(0, 0);
-    nd.setHours(nd.getHours(), nd.getMinutes());
-    nd.setFullYear(year, month - 1, 1);
-    const dim = daysInMonth(year, month);
-    const safeDay = Math.min(day, dim);
-    nd.setDate(safeDay);
-    return nd;
-  };
-
-  const ITEM_HEIGHT = 34;
-  const VISIBLE_COUNT = 5;
-
-  const WheelColumn = ({ data, selectedIndex, onSelect, width, formatItem }) => {
-    const listRef = useRef(null);
-    const topBottomPad = ((VISIBLE_COUNT - 1) / 2) * ITEM_HEIGHT;
-
-    useEffect(() => {
-      if (listRef.current && typeof selectedIndex === 'number' && selectedIndex >= 0) {
-        listRef.current.scrollToOffset({ offset: selectedIndex * ITEM_HEIGHT, animated: false });
-      }
-    }, [selectedIndex]);
-
-    const onEnd = (e) => {
-      const y = e.nativeEvent.contentOffset.y;
-      let idx = Math.round(y / ITEM_HEIGHT);
-      if (idx < 0) idx = 0;
-      if (idx > data.length - 1) idx = data.length - 1;
-      if (listRef.current) {
-        listRef.current.scrollToOffset({ offset: idx * ITEM_HEIGHT, animated: true });
-      }
-      if (idx !== selectedIndex) onSelect?.(idx);
-    };
-
-    return (
-      <View style={[{ height: ITEM_HEIGHT * VISIBLE_COUNT, overflow: 'hidden' }, width ? { width } : { flex: 1 }]}>
-        <View style={{ position: 'absolute', top: (ITEM_HEIGHT * VISIBLE_COUNT) / 2 - ITEM_HEIGHT / 2, left: 0, right: 0, height: ITEM_HEIGHT, borderTopWidth: 1, borderBottomWidth: 1, borderColor: theme.colors.border, zIndex: 1 }} />
-        <FlatList
-          ref={listRef}
-          data={data}
-          keyExtractor={(item, idx) => String(item) + '-' + idx}
-          showsVerticalScrollIndicator={false}
-          onMomentumScrollEnd={onEnd}
-          onScrollEndDrag={onEnd}
-          getItemLayout={(_, index) => ({ length: ITEM_HEIGHT, offset: ITEM_HEIGHT * index, index })}
-          ListHeaderComponent={<View style={{ height: topBottomPad }} />}
-          ListFooterComponent={<View style={{ height: topBottomPad }} />}
-          renderItem={({ item, index }) => (
-            <View style={{ height: ITEM_HEIGHT, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ color: index === selectedIndex ? theme.colors.text : theme.colors.textSecondary, fontWeight: index === selectedIndex ? '700' : '400' }}>
-                {formatItem ? formatItem(item, index) : item}
-              </Text>
-            </View>
-          )}
-        />
-      </View>
-    );
-  };
-
-  const nextWeekdayAt = (weekday, hour, minute) => {
-    const n = now();
-    const d = new Date(n);
-    const diff = (weekday + 7 - d.getDay()) % 7 || 7;
-    d.setDate(d.getDate() + diff);
-    d.setHours(hour, minute, 0, 0);
-    return d;
-  };
-
-  const setDatePart = (fn) => {
-    setIosPickerDate((prev) => {
-      const d = new Date(prev);
-      fn(d);
-      return d;
-    });
-  };
-
-  useEffect(() => {
-    if (!showIOSPicker) return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      setShowIOSPicker(false);
-      return true;
-    });
-    return () => sub.remove();
-  }, [showIOSPicker]);
-
   const persistNotificationMap = useCallback(async (nextMap) => {
     notificationMapRef.current = nextMap;
     setNotificationMap(nextMap);
@@ -337,7 +268,9 @@ const RemindersScreen = () => {
 
   useEffect(() => {
     try {
-      const upcomingCount = reminders.filter((r) => r?.due_at && new Date(r.due_at) > new Date()).length;
+      const upcomingCount = reminders.filter(
+        (r) => !r?.is_completed && r?.due_at && new Date(r.due_at) > new Date()
+      ).length;
       setCount('reminders', upcomingCount);
     } catch {
       setCount('reminders', 0);
@@ -365,7 +298,7 @@ const RemindersScreen = () => {
 
   const scheduleNotificationForReminder = useCallback(
     async (reminder) => {
-      if (!reminder?.id || !reminder?.due_at) {
+      if (!reminder?.id || !reminder?.due_at || reminder?.is_completed) {
         await cancelNotificationForReminder(reminder?.id);
         return;
       }
@@ -386,17 +319,13 @@ const RemindersScreen = () => {
       }
 
       try {
-        // Setup high-priority notification channels
         await setupNotificationChannels();
-
-        // Request permissions with Firebase fallback
         const hasPermission = await requestNotificationPermissions();
         if (!hasPermission) {
           showToast('Uyarı', 'Bildirim izni verilmedi', 2000);
           return;
         }
 
-        // Schedule with maximum priority settings for battery optimization bypass
         const notificationId = await scheduleReminderNotification(reminder);
 
         const updated = {
@@ -463,6 +392,13 @@ const RemindersScreen = () => {
       setLoading(false);
     }
   }, [syncNotificationsForReminders]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchReminders();
+    setRefreshing(false);
+    if (hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  }, [fetchReminders, hapticsEnabled]);
 
   useEffect(() => {
     fetchReminders();
@@ -545,6 +481,7 @@ const RemindersScreen = () => {
       const payload = {
         title: newTitle.trim(),
         user_id: userId,
+        is_completed: false,
       };
 
       if (newDueDate) {
@@ -668,24 +605,113 @@ const RemindersScreen = () => {
     }
   };
 
-  const [dateText, setDateText] = useState('');
-  const [timeText, setTimeText] = useState('');
+  const handleToggleComplete = async (reminderId, newStatus) => {
+    try {
+      const { data, error: updateError } = await supabase
+        .from('reminders')
+        .update({
+          is_completed: newStatus,
+          completed_at: newStatus ? new Date().toISOString() : null,
+        })
+        .eq('id', reminderId)
+        .select()
+        .single();
 
-  const pad2 = (n) => String(n).padStart(2, '0');
-  const fmtDateISO = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-  const fmtTime = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+      if (updateError) throw updateError;
 
-  const openDateTimePicker = (target) => {
-    const currentValue = target === 'new' ? newDueDate : editingDueDate;
-    setPickerTarget(target);
-    setIosPickerDate(currentValue);
-    setDateText(fmtDateISO(currentValue));
-    setTimeText(fmtTime(currentValue));
-    if (Platform.OS === 'android') setAndroidPickerStep('date');
-    setShowIOSPicker(true);
+      setReminders((prev) => prev.map((item) => (item.id === data.id ? data : item)));
+
+      if (newStatus) {
+        await cancelNotificationForReminder(reminderId);
+        showToast('Tamamlandı', 'Hatırlatma tamamlandı olarak işaretlendi');
+      } else {
+        await scheduleNotificationForReminder(data);
+        showToast('Geri alındı', 'Hatırlatma aktif olarak işaretlendi');
+      }
+    } catch (err) {
+      console.warn('Toggle complete failed', err);
+      showToast('Hata', 'İşlem başarısız oldu');
+    }
   };
 
-  // Categorize reminders
+  const openQuickTemplate = (template) => {
+    if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    const now = new Date();
+    let dueDate = new Date();
+
+    switch (template) {
+      case '1hour':
+        dueDate.setHours(dueDate.getHours() + 1);
+        dueDate.setSeconds(0, 0);
+        break;
+      case 'tonight':
+        dueDate.setHours(21, 0, 0, 0);
+        if (dueDate <= now) dueDate.setDate(dueDate.getDate() + 1);
+        break;
+      case 'tomorrow':
+        dueDate.setDate(dueDate.getDate() + 1);
+        dueDate.setHours(9, 0, 0, 0);
+        break;
+      case 'custom':
+        dueDate.setMinutes(dueDate.getMinutes() + 5);
+        dueDate.setSeconds(0, 0);
+        break;
+      default:
+        break;
+    }
+
+    resetForm();
+    setNewDueDate(clampFuture(dueDate));
+    setQuickTemplate(template);
+    setSheetMode(template === 'custom' ? 'add' : 'quick');
+    setShowQuickMenu(false);
+    setShowBottomSheet(true);
+  };
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+
+  const daysInMonth = (year, month) => new Date(year, month, 0).getDate();
+
+  const setYMD = (base, year, month, day) => {
+    const nd = new Date(base);
+    nd.setSeconds(0, 0);
+    nd.setHours(nd.getHours(), nd.getMinutes());
+    nd.setFullYear(year, month - 1, 1);
+    const dim = daysInMonth(year, month);
+    const safeDay = Math.min(day, dim);
+    nd.setDate(safeDay);
+    return nd;
+  };
+
+  const handleOpenDatePicker = () => {
+    setPickerDate(newDueDate);
+    setPickerStep('date');
+    setShowDatePicker(true);
+  };
+
+  const handleDatePickerConfirm = () => {
+    const finalDate = clampFuture(pickerDate);
+    setNewDueDate(finalDate);
+    setShowDatePicker(false);
+    setPickerStep('date');
+    if (hapticsEnabled) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    showToast('Başarılı', 'Tarih ayarlandı');
+  };
+
+  const handleDatePickerCancel = () => {
+    setShowDatePicker(false);
+    setPickerStep('date');
+  };
+
+  // Filtered reminders
+  const filteredReminders = useMemo(() => {
+    if (filter === 'all') return reminders;
+    if (filter === 'completed') return reminders.filter((r) => r.is_completed);
+    return reminders.filter((r) => !r.is_completed);
+  }, [reminders, filter]);
+
+  // Categorize active reminders
   const categorizedReminders = useMemo(() => {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -696,7 +722,9 @@ const RemindersScreen = () => {
     const today = [];
     const upcoming = [];
 
-    reminders.forEach((reminder) => {
+    filteredReminders.forEach((reminder) => {
+      if (reminder.is_completed) return;
+
       const dueDate = reminder.due_at ? new Date(reminder.due_at) : null;
       if (!dueDate) {
         upcoming.push(reminder);
@@ -710,6 +738,10 @@ const RemindersScreen = () => {
     });
 
     return { overdue, today, upcoming };
+  }, [filteredReminders]);
+
+  const completedReminders = useMemo(() => {
+    return reminders.filter((r) => r.is_completed);
   }, [reminders]);
 
   const styles = useMemo(
@@ -717,165 +749,109 @@ const RemindersScreen = () => {
       StyleSheet.create({
         container: {
           flex: 1,
-          backgroundColor: accent && theme.colors.backgroundTinted
-            ? theme.colors.backgroundTinted
-            : theme.colors.background,
+          backgroundColor:
+            accent && theme.colors.backgroundTinted ? theme.colors.backgroundTinted : theme.colors.background,
         },
         customHeader: {
-          paddingTop: insets.top + 8,
-          paddingHorizontal: 16,
-          paddingBottom: 8,
+          paddingTop: insets.top + 6,
+          paddingHorizontal: 14,
+          paddingBottom: 10,
+          backgroundColor:
+            accent && theme.colors.backgroundTinted ? theme.colors.backgroundTinted : theme.colors.background,
+        },
+        headerTop: {
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
-          backgroundColor: accent && theme.colors.backgroundTinted
-            ? theme.colors.backgroundTinted
-            : theme.colors.background,
+          marginBottom: 10,
         },
         keeperTitle: {
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 12,
+          gap: 8,
         },
         keeperIcon: {
-          width: 42,
-          height: 42,
-          borderRadius: 21,
+          width: 32,
+          height: 32,
+          borderRadius: 16,
           backgroundColor: theme.colors.primary + '15',
           alignItems: 'center',
           justifyContent: 'center',
-          borderWidth: 2,
-          borderColor: theme.colors.primary + '30',
         },
         keeperText: {
           color: theme.colors.text,
-          fontWeight: '800',
-          fontSize: 26,
-          letterSpacing: 0.8,
+          fontWeight: '700',
+          fontSize: 20,
+          letterSpacing: 0.3,
         },
         profileButton: {
-          padding: 3,
+          padding: 2,
           borderRadius: 999,
-          borderWidth: 2.5,
-          borderColor: theme.colors.primary + '40',
+          borderWidth: 2,
+          borderColor: theme.colors.primary + '30',
           backgroundColor: theme.colors.surface,
         },
+        filterContainer: {
+          flexDirection: 'row',
+          gap: 8,
+        },
+        filterChip: {
+          paddingHorizontal: 16,
+          paddingVertical: 8,
+          borderRadius: 20,
+          borderWidth: 1.5,
+        },
+        filterChipActive: {
+          backgroundColor: theme.colors.primary,
+          borderColor: theme.colors.primary,
+        },
+        filterChipInactive: {
+          backgroundColor: theme.colors.surface,
+          borderColor: theme.colors.border,
+        },
+        filterChipText: {
+          fontSize: 16,
+          fontWeight: '600',
+        },
+        filterChipTextActive: {
+          color: theme.dark ? theme.colors.background : '#ffffff',
+        },
+        filterChipTextInactive: {
+          color: theme.colors.textSecondary,
+        },
         scrollContent: {
-          padding: 16,
+          padding: 12,
           paddingBottom: 100,
         },
         categorySection: {
-          marginBottom: 24,
+          marginBottom: 16,
         },
         categoryHeader: {
           flexDirection: 'row',
           alignItems: 'center',
-          marginBottom: 12,
-          gap: 8,
+          marginBottom: 8,
+          gap: 6,
+          paddingHorizontal: 2,
         },
         categoryTitle: {
-          fontSize: 18,
+          fontSize: 15,
           fontWeight: '700',
           color: theme.colors.text,
+          textTransform: 'uppercase',
+          letterSpacing: 0.5,
         },
         categoryBadge: {
           backgroundColor: theme.colors.primary + '20',
           paddingHorizontal: 8,
           paddingVertical: 2,
-          borderRadius: 10,
+          borderRadius: 8,
+          minWidth: 22,
+          alignItems: 'center',
         },
         categoryBadgeText: {
           fontSize: 12,
           fontWeight: '700',
           color: theme.colors.primary,
-        },
-        reminderCard: {
-          backgroundColor: accent && theme.colors.surfaceTinted
-            ? theme.colors.surfaceTinted
-            : theme.colors.surface,
-          borderRadius: 16,
-          marginBottom: 12,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          overflow: 'hidden',
-        },
-        cardColorStrip: {
-          position: 'absolute',
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: 4,
-        },
-        cardContent: {
-          padding: 16,
-          paddingLeft: 20,
-        },
-        cardHeader: {
-          flexDirection: 'row',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          marginBottom: 8,
-        },
-        cardTitleRow: {
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
-        },
-        cardIcon: {
-          width: 36,
-          height: 36,
-          borderRadius: 18,
-          backgroundColor: theme.colors.primary + '15',
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        cardTextContainer: {
-          flex: 1,
-        },
-        cardTitle: {
-          fontSize: 16,
-          fontWeight: '600',
-          color: theme.colors.text,
-          marginBottom: 4,
-        },
-        cardTime: {
-          fontSize: 13,
-          color: theme.colors.textSecondary,
-        },
-        cardActions: {
-          flexDirection: 'row',
-          gap: 8,
-          marginTop: 8,
-          paddingTop: 12,
-          borderTopWidth: 1,
-          borderTopColor: theme.colors.border,
-        },
-        actionButton: {
-          flex: 1,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingVertical: 8,
-          paddingHorizontal: 12,
-          borderRadius: 10,
-          gap: 6,
-        },
-        editButton: {
-          backgroundColor: theme.colors.primary + '15',
-        },
-        deleteButton: {
-          backgroundColor: theme.colors.danger + '15',
-        },
-        actionButtonText: {
-          fontSize: 14,
-          fontWeight: '600',
-        },
-        editButtonText: {
-          color: theme.colors.primary,
-        },
-        deleteButtonText: {
-          color: theme.colors.danger,
         },
         fab: {
           position: 'absolute',
@@ -892,6 +868,42 @@ const RemindersScreen = () => {
           shadowOpacity: 0.3,
           shadowRadius: 8,
           elevation: 8,
+        },
+        quickMenuContainer: {
+          position: 'absolute',
+          right: 20,
+          bottom: 160 + insets.bottom,
+          alignItems: 'flex-end',
+          gap: 12,
+        },
+        quickMenuItem: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          backgroundColor: theme.colors.surface,
+          paddingVertical: 12,
+          paddingHorizontal: 16,
+          borderRadius: 12,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.15,
+          shadowRadius: 4,
+          elevation: 4,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        quickMenuText: {
+          fontSize: 17,
+          fontWeight: '600',
+          color: theme.colors.text,
+        },
+        quickMenuIcon: {
+          width: 32,
+          height: 32,
+          borderRadius: 16,
+          backgroundColor: theme.colors.primary + '15',
+          alignItems: 'center',
+          justifyContent: 'center',
         },
         emptyContainer: {
           flex: 1,
@@ -917,20 +929,33 @@ const RemindersScreen = () => {
         },
         modalRoot: {
           flex: 1,
-          backgroundColor: 'rgba(0,0,0,0.4)',
+          backgroundColor: 'rgba(0,0,0,0.5)',
           justifyContent: 'center',
-          padding: 24,
+          alignItems: 'center',
+          padding: 20,
+          paddingTop: insets.top + 40,
+          paddingBottom: insets.bottom + 40,
+          zIndex: 9999,
         },
         modalBackdropFill: {
           ...StyleSheet.absoluteFillObject,
+          zIndex: 9998,
         },
         bottomSheetContainer: {
-          backgroundColor: accent && theme.colors.surfaceTinted
-            ? theme.colors.surfaceTinted
-            : theme.colors.surface,
+          backgroundColor:
+            accent && theme.colors.surfaceTinted ? theme.colors.surfaceTinted : theme.colors.surface,
           borderRadius: 20,
           padding: 16,
+          paddingBottom: 16,
           gap: 16,
+          width: '100%',
+          maxWidth: 400,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.3,
+          shadowRadius: 16,
+          elevation: 24,
+          zIndex: 10000,
         },
         bottomSheetHandle: {
           alignItems: 'center',
@@ -961,9 +986,10 @@ const RemindersScreen = () => {
           borderRadius: 12,
           borderWidth: 1,
           borderColor: theme.colors.border,
-          backgroundColor: accent && theme.colors.surfaceElevatedTinted
-            ? theme.colors.surfaceElevatedTinted
-            : theme.colors.surfaceElevated,
+          backgroundColor:
+            accent && theme.colors.surfaceElevatedTinted
+              ? theme.colors.surfaceElevatedTinted
+              : theme.colors.surfaceElevated,
           color: theme.colors.text,
           paddingHorizontal: 16,
           fontSize: 16,
@@ -1004,93 +1030,108 @@ const RemindersScreen = () => {
           fontSize: 14,
           textAlign: 'center',
         },
-        iosPickerContainer: {
-          backgroundColor: accent && theme.colors.surfaceTinted
-            ? theme.colors.surfaceTinted
-            : theme.colors.surface,
-          borderRadius: 16,
-          padding: 12,
-          gap: 10,
+        customPickerContainer: {
+          backgroundColor:
+            accent && theme.colors.surfaceTinted ? theme.colors.surfaceTinted : theme.colors.surface,
+          borderRadius: 20,
+          padding: 20,
+          gap: 16,
+          width: '100%',
+          maxWidth: 400,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.3,
+          shadowRadius: 16,
+          elevation: 24,
         },
-        iosPicker: { height: 200 },
-        iosPickerActions: { flexDirection: 'row', gap: 12 },
-        cancelButton: {
-          backgroundColor: accent && theme.colors.surfaceElevatedTinted
-            ? theme.colors.surfaceElevatedTinted
-            : theme.colors.surfaceElevated,
+        pickerHeader: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 8,
+        },
+        pickerTitle: {
+          fontSize: 20,
+          fontWeight: '700',
+          color: theme.colors.text,
+        },
+        pickerStepButton: {
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.surfaceElevated,
           borderWidth: 1,
           borderColor: theme.colors.border,
         },
-        saveButton: { backgroundColor: theme.colors.primary },
-        actionButtonTextOnSurface: { color: theme.colors.text, fontWeight: '600' },
+        pickerStepButtonActive: {
+          backgroundColor: theme.colors.primary + '20',
+          borderColor: theme.colors.primary,
+        },
+        pickerContent: {
+          paddingVertical: 8,
+        },
+        wheelContainer: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+        },
+        wheelSeparator: {
+          fontSize: 24,
+          fontWeight: '700',
+          color: theme.colors.text,
+          marginHorizontal: 4,
+        },
+        pickerPreview: {
+          backgroundColor: theme.colors.surfaceElevated,
+          padding: 12,
+          borderRadius: 12,
+          alignItems: 'center',
+        },
+        pickerPreviewLabel: {
+          fontSize: 12,
+          color: theme.colors.textSecondary,
+          marginBottom: 4,
+        },
+        pickerPreviewText: {
+          fontSize: 16,
+          fontWeight: '600',
+          color: theme.colors.text,
+        },
+        pickerActions: {
+          flexDirection: 'row',
+          gap: 12,
+        },
+        pickerButton: {
+          flex: 1,
+          height: 48,
+          borderRadius: 12,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        pickerCancelButton: {
+          backgroundColor: theme.colors.surfaceElevated,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        pickerConfirmButton: {
+          backgroundColor: theme.colors.primary,
+        },
+        pickerCancelButtonText: {
+          fontSize: 16,
+          fontWeight: '600',
+          color: theme.colors.text,
+        },
+        pickerConfirmButtonText: {
+          fontSize: 16,
+          fontWeight: '700',
+          color: theme.dark ? theme.colors.background : '#ffffff',
+        },
       }),
     [theme, accent, insets]
   );
-
-  const renderReminderCard = (reminder) => {
-    const dueDate = reminder.due_at ? new Date(reminder.due_at) : null;
-    const isOverdue = dueDate ? dueDate < new Date() : false;
-    const relativeTime = getRelativeTime(reminder.due_at);
-
-    const colorStrip = isOverdue
-      ? theme.colors.danger
-      : dueDate && (dueDate - new Date()) < 3600000 // < 1 hour
-        ? theme.colors.warning
-        : theme.colors.primary;
-
-    return (
-      <Animated.View
-        key={reminder.id}
-        entering={FadeInDown.duration(300)}
-        exiting={FadeOutUp.duration(200)}
-        layout={Layout.springify()}
-        style={styles.reminderCard}
-      >
-        <View style={[styles.cardColorStrip, { backgroundColor: colorStrip }]} />
-        <View style={styles.cardContent}>
-          <View style={styles.cardHeader}>
-            <View style={styles.cardTitleRow}>
-              <View style={styles.cardIcon}>
-                <MaterialCommunityIcons
-                  name="bell-outline"
-                  size={20}
-                  color={theme.colors.primary}
-                />
-              </View>
-              <View style={styles.cardTextContainer}>
-                <Text style={styles.cardTitle}>{reminder.title}</Text>
-                <Text style={[styles.cardTime, isOverdue && { color: theme.colors.danger }]}>
-                  {relativeTime}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <View style={styles.cardActions}>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.editButton]}
-              onPress={() => handleStartEditing(reminder)}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="pencil" size={16} color={theme.colors.primary} />
-              <Text style={[styles.actionButtonText, styles.editButtonText]}>Düzenle</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.actionButton, styles.deleteButton]}
-              onPress={() => handleDeleteReminder(reminder.id)}
-              activeOpacity={0.7}
-              disabled={deletingId === reminder.id}
-            >
-              <Ionicons name="trash-outline" size={16} color={theme.colors.danger} />
-              <Text style={[styles.actionButtonText, styles.deleteButtonText]}>
-                {deletingId === reminder.id ? 'Siliniyor...' : 'Sil'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Animated.View>
-    );
-  };
 
   const renderCategory = (title, items, icon, iconColor) => {
     if (items.length === 0) return null;
@@ -1098,402 +1139,392 @@ const RemindersScreen = () => {
     return (
       <View style={styles.categorySection}>
         <View style={styles.categoryHeader}>
-          <MaterialCommunityIcons name={icon} size={20} color={iconColor} />
+          <MaterialCommunityIcons name={icon} size={14} color={iconColor} />
           <Text style={styles.categoryTitle}>{title}</Text>
           <View style={styles.categoryBadge}>
             <Text style={styles.categoryBadgeText}>{items.length}</Text>
           </View>
         </View>
-        {items.map((reminder) => renderReminderCard(reminder))}
+        {items.map((reminder) => (
+          <SwipeableReminderCard
+            key={reminder.id}
+            reminder={reminder}
+            onEdit={handleStartEditing}
+            onDelete={handleDeleteReminder}
+            onToggleComplete={handleToggleComplete}
+            isDeleting={deletingId === reminder.id}
+          />
+        ))}
       </View>
     );
   };
 
+  const quickActions = [
+    { id: '1hour', label: '1 saat sonra', icon: 'clock-fast' },
+    { id: 'tonight', label: 'Bu akşam', icon: 'weather-night' },
+    { id: 'tomorrow', label: 'Yarın sabah', icon: 'weather-sunny' },
+    { id: 'custom', label: 'Özel tarih', icon: 'calendar-edit' },
+  ];
+
   return (
-    <Animated.View style={[styles.container, animatedStyle]}>
-      <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <Animated.View style={[styles.container, animatedStyle]}>
+        <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
 
-      {/* Custom Header */}
-      <View style={styles.customHeader}>
-        <View style={styles.keeperTitle}>
-          <View style={styles.keeperIcon}>
-            <MaterialCommunityIcons name="shield-lock" size={22} color={theme.colors.primary} />
-          </View>
-          <Text style={styles.keeperText}>Keeper</Text>
-        </View>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('Profile')}
-          style={styles.profileButton}
-          activeOpacity={0.7}
-        >
-          <Avatar
-            name={session?.user?.user_metadata?.full_name || session?.user?.email}
-            imageUrl={session?.user?.user_metadata?.avatar_url}
-            size={40}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {loading ? (
-        <View style={styles.emptyContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={[styles.emptyText, { marginTop: 16 }]}>Hatırlatmalar yükleniyor...</Text>
-        </View>
-      ) : reminders.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <MaterialCommunityIcons
-            name="bell-off-outline"
-            size={64}
-            color={theme.colors.muted}
-            style={styles.emptyIcon}
-          />
-          <Text style={styles.emptyTitle}>Henüz hatırlatma yok</Text>
-          <Text style={styles.emptyText}>
-            Sağ alttaki + butonuna tıklayarak{'\n'}ilk hatırlatmanı ekle
-          </Text>
-        </View>
-      ) : (
-        <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {renderCategory('Geçmiş', categorizedReminders.overdue, 'clock-alert-outline', theme.colors.danger)}
-          {renderCategory('Bugün', categorizedReminders.today, 'calendar-today', theme.colors.warning)}
-          {renderCategory('Yaklaşan', categorizedReminders.upcoming, 'calendar-clock', theme.colors.primary)}
-        </ScrollView>
-      )}
-
-      {/* FAB */}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => {
-          if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          resetForm();
-          setSheetMode('add');
-          setShowBottomSheet(true);
-        }}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="add" size={28} color={theme.dark ? theme.colors.background : '#ffffff'} />
-      </TouchableOpacity>
-
-      {/* Bottom Sheet Modal for Add/Edit */}
-      {showBottomSheet && (
-        <Modal
-          transparent
-          statusBarTranslucent
-          animationType="none"
-          visible={showBottomSheet}
-          onRequestClose={() => setShowBottomSheet(false)}
-        >
-          <View style={styles.modalRoot}>
-            <Animated.View style={[styles.modalBackdropFill, backdropStyle]}>
-              <Pressable
-                style={{ flex: 1 }}
-                onPress={() => {
-                  setShowBottomSheet(false);
-                  resetEditing();
-                }}
-              />
-            </Animated.View>
-            <Animated.View
-              style={[styles.bottomSheetContainer, { maxHeight: SHEET_HEIGHT }]}
-              entering={FadeIn.duration(200)}
-              exiting={FadeOut.duration(150)}
+        {/* Custom Header */}
+        <View style={styles.customHeader}>
+          <View style={styles.headerTop}>
+            <View style={styles.keeperTitle}>
+              <View style={styles.keeperIcon}>
+                <MaterialCommunityIcons name="bell-ring" size={18} color={theme.colors.primary} />
+              </View>
+              <Text style={styles.keeperText}>Keeper</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Profile')}
+              style={styles.profileButton}
+              activeOpacity={0.7}
             >
-              <View style={styles.bottomSheetHandle}>
-                <View style={styles.handle} />
-              </View>
-
-              <View style={styles.sheetHeader}>
-                <Text style={styles.sheetTitle}>
-                  {sheetMode === 'add' ? 'Yeni Hatırlatma' : 'Hatırlatmayı Düzenle'}
-                </Text>
-                <TouchableOpacity
-                  style={styles.closeButton}
-                  onPress={() => {
-                    setShowBottomSheet(false);
-                    resetEditing();
-                  }}
-                >
-                  <Ionicons name="close" size={24} color={theme.colors.text} />
-                </TouchableOpacity>
-              </View>
-
-              <TextInput
-                style={styles.input}
-                value={sheetMode === 'add' ? newTitle : editingTitle}
-                onChangeText={sheetMode === 'add' ? setNewTitle : setEditingTitle}
-                placeholder="Hatırlatma başlığı"
-                placeholderTextColor={theme.colors.muted}
+              <Avatar
+                name={session?.user?.user_metadata?.full_name || session?.user?.email}
+                imageUrl={session?.user?.user_metadata?.avatar_url}
+                size={32}
               />
+            </TouchableOpacity>
+          </View>
 
+          {/* Filter Chips */}
+          <View style={styles.filterContainer}>
+            {['active', 'completed', 'all'].map((f) => (
               <TouchableOpacity
-                style={styles.dateButton}
-                onPress={() => openDateTimePicker(sheetMode === 'add' ? 'new' : 'edit')}
-                onPressIn={() => hapticsEnabled && Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                key={f}
+                style={[styles.filterChip, filter === f ? styles.filterChipActive : styles.filterChipInactive]}
+                onPress={() => {
+                  setFilter(f);
+                  if (hapticsEnabled) Haptics.selectionAsync();
+                }}
               >
-                <Ionicons name="calendar-outline" size={20} color={theme.dark ? theme.colors.background : '#ffffff'} />
-                <Text style={styles.dateButtonText}>Tarih & Saat Seç</Text>
-              </TouchableOpacity>
-
-              <Text style={styles.datePreview}>
-                {formatDateTime(sheetMode === 'add' ? newDueDate : editingDueDate)}
-              </Text>
-
-              <TouchableOpacity
-                style={styles.primaryButton}
-                onPress={sheetMode === 'add' ? handleAddReminder : handleUpdateReminder}
-                onPressIn={() => hapticsEnabled && Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                disabled={sheetMode === 'add' ? saving : updating}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {sheetMode === 'add'
-                    ? (saving ? 'Kaydediliyor...' : 'Kaydet')
-                    : (updating ? 'Güncelleniyor...' : 'Güncelle')
-                  }
+                <Text style={[styles.filterChipText, filter === f ? styles.filterChipTextActive : styles.filterChipTextInactive]}>
+                  {f === 'active' ? 'Aktif' : f === 'completed' ? 'Tamamlandı' : 'Tümü'}
                 </Text>
               </TouchableOpacity>
-
-              {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            </Animated.View>
+            ))}
           </View>
-        </Modal>
-      )}
+        </View>
 
-      {/* Date/Time Picker Modal */}
-      {showIOSPicker && (
-        <Modal
-          transparent
-          statusBarTranslucent
-          animationType="none"
-          visible={showIOSPicker}
-          onRequestClose={() => setShowIOSPicker(false)}
+        {loading ? (
+          <View style={styles.emptyContainer}>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <Text style={[styles.emptyText, { marginTop: 16 }]}>Hatırlatmalar yükleniyor...</Text>
+          </View>
+        ) : filteredReminders.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <MaterialCommunityIcons
+              name="bell-off-outline"
+              size={64}
+              color={theme.colors.muted}
+              style={styles.emptyIcon}
+            />
+            <Text style={styles.emptyTitle}>
+              {filter === 'completed' ? 'Tamamlanmış hatırlatma yok' : 'Henüz hatırlatma yok'}
+            </Text>
+            <Text style={styles.emptyText}>
+              {filter === 'completed'
+                ? 'Tamamladığın hatırlatmalar burada görünecek'
+                : 'Sağ alttaki + butonuna tıklayarak\nilk hatırlatmanı ekle'}
+            </Text>
+          </View>
+        ) : (
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />}
+          >
+            {filter === 'all' || filter === 'active' ? (
+              <>
+                {renderCategory('Geçmiş', categorizedReminders.overdue, 'clock-alert-outline', theme.colors.danger)}
+                {renderCategory('Bugün', categorizedReminders.today, 'calendar-today', theme.colors.warning)}
+                {renderCategory('Yaklaşan', categorizedReminders.upcoming, 'calendar-clock', theme.colors.primary)}
+              </>
+            ) : null}
+            {filter === 'all' || filter === 'completed' ? renderCategory('Tamamlananlar', completedReminders, 'check-circle-outline', theme.colors.success || '#10b981') : null}
+          </ScrollView>
+        )}
+
+        {/* Quick Menu */}
+        {showQuickMenu && (
+          <Modal transparent statusBarTranslucent animationType="none" visible={showQuickMenu} onRequestClose={() => setShowQuickMenu(false)}>
+            <Pressable
+              style={{ flex: 1 }}
+              onPress={() => animateQuickMenuClose(() => setShowQuickMenu(false))}
+            >
+              <Animated.View style={[{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.3)' }, quickMenuBackdropStyle]} />
+              <View style={{ flex: 1 }} pointerEvents="box-none">
+                <Animated.View style={[styles.quickMenuContainer, quickMenuStyle]}>
+                  {quickActions.map((action) => (
+                    <View key={action.id}>
+                      <TouchableOpacity style={styles.quickMenuItem} onPress={() => openQuickTemplate(action.id)} activeOpacity={0.7}>
+                        <Text style={styles.quickMenuText}>{action.label}</Text>
+                        <View style={styles.quickMenuIcon}>
+                          <MaterialCommunityIcons name={action.icon} size={18} color={theme.colors.primary} />
+                        </View>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </Animated.View>
+              </View>
+            </Pressable>
+          </Modal>
+        )}
+
+        {/* FAB */}
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => {
+            if (hapticsEnabled) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            setShowQuickMenu(!showQuickMenu);
+          }}
+          activeOpacity={0.8}
         >
-          <View style={styles.modalRoot}>
-            <Animated.View style={[styles.modalBackdropFill, backdropStyle]}>
-              <Pressable style={{ flex: 1 }} onPress={() => { animateClose(() => setShowIOSPicker(false)); }} />
-            </Animated.View>
-            <Animated.View style={[styles.iosPickerContainer, { maxHeight: SHEET_HEIGHT }, sheetStyle, sheetOpacityStyle]} {...panResponder.panHandlers}>
-              <View style={{ alignItems: 'center', paddingTop: 4 }}>
-                <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: theme.colors.border, marginBottom: 6 }} />
-              </View>
+          <Ionicons name="add" size={28} color={theme.dark ? theme.colors.background : '#ffffff'} />
+        </TouchableOpacity>
 
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={[styles.sheetTitle, { fontSize: 18 }]}>Tarih & Saat</Text>
-                <TouchableOpacity onPress={() => animateClose(() => setShowIOSPicker(false))} style={{ padding: 8 }}>
-                  <Text style={{ color: theme.colors.text }}>Kapat</Text>
-                </TouchableOpacity>
-              </View>
-
-              {(() => {
-                const y = iosPickerDate.getFullYear();
-                const m = iosPickerDate.getMonth() + 1;
-                const d = iosPickerDate.getDate();
-                const hh = iosPickerDate.getHours();
-                const mm = iosPickerDate.getMinutes();
-
-                const years = Array.from({ length: 11 }, (_, i) => y - 5 + i);
-                const months = Array.from({ length: 12 }, (_, i) => i + 1);
-                const dim = daysInMonth(y, m);
-                const days = Array.from({ length: dim }, (_, i) => i + 1);
-                const hours = Array.from({ length: 24 }, (_, i) => i);
-                const minutes = Array.from({ length: 60 }, (_, i) => i);
-
-                const onYear = (idx) => {
-                  const year = years[idx];
-                  setIosPickerDate((prev) => setYMD(prev, year, m, d));
-                };
-                const onMonth = (idx) => {
-                  const month = months[idx];
-                  setIosPickerDate((prev) => setYMD(prev, y, month, d));
-                };
-                const onDay = (idx) => {
-                  const day = days[idx];
-                  setIosPickerDate((prev) => setYMD(prev, y, m, day));
-                };
-                const onHour = (idx) => {
-                  const hour = hours[idx];
-                  setIosPickerDate((prev) => {
-                    const nd = new Date(prev);
-                    nd.setHours(hour);
-                    return nd;
-                  });
-                };
-                const onMinute = (idx) => {
-                  const minute = minutes[idx];
-                  setIosPickerDate((prev) => {
-                    const nd = new Date(prev);
-                    nd.setMinutes(minute);
-                    return nd;
-                  });
-                };
-
-                return (
-                  <View style={{ gap: 8 }}>
-                    <Text style={{ color: theme.colors.textSecondary }}>
-                      {androidPickerStep === 'date' ? 'Tarih seç' : 'Saat seç'}: <Text style={{ color: theme.colors.text, fontWeight: '700' }}>{iosPickerDate.toLocaleString()}</Text>
-                    </Text>
-                    {androidPickerStep === 'date' ? (
-                      <View style={{ gap: 8 }}>
-                        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                          <TouchableOpacity
-                            onPress={() => { const d = new Date(); d.setHours(iosPickerDate.getHours(), iosPickerDate.getMinutes(), 0, 0); setIosPickerDate(clampFuture(d)); }}
-                            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }}
-                          >
-                            <Text style={{ color: theme.colors.text }}>Bugün</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => { const d = new Date(); d.setDate(d.getDate()+1); d.setHours(iosPickerDate.getHours(), iosPickerDate.getMinutes(), 0, 0); setIosPickerDate(clampFuture(d)); }}
-                            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }}
-                          >
-                            <Text style={{ color: theme.colors.text }}>Yarın</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => { const d = new Date(); d.setDate(d.getDate()+3); d.setHours(iosPickerDate.getHours(), iosPickerDate.getMinutes(), 0, 0); setIosPickerDate(clampFuture(d)); }}
-                            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }}
-                          >
-                            <Text style={{ color: theme.colors.text }}>3 gün sonra</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => { const d = new Date(); d.setDate(d.getDate()+7); d.setHours(iosPickerDate.getHours(), iosPickerDate.getMinutes(), 0, 0); setIosPickerDate(clampFuture(d)); }}
-                            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border }}
-                          >
-                            <Text style={{ color: theme.colors.text }}>1 hafta sonra</Text>
-                          </TouchableOpacity>
-                        </View>
-                        <View style={{ flexDirection: 'row', gap: 8 }}>
-                          <WheelColumn data={days} selectedIndex={Math.max(0, d - 1)} onSelect={onDay} />
-                          <WheelColumn data={months} selectedIndex={Math.max(0, m - 1)} onSelect={onMonth} />
-                          <WheelColumn data={years} selectedIndex={Math.max(0, years.indexOf(y))} onSelect={onYear} />
-                        </View>
-                      </View>
-                    ) : (
-                      <View style={{ flexDirection: 'row', gap: 8 }}>
-                        <WheelColumn data={hours} selectedIndex={Math.max(0, hours.indexOf(hh))} onSelect={onHour} formatItem={(v) => pad2(v)} />
-                        <WheelColumn data={minutes} selectedIndex={Math.max(0, minutes.indexOf(mm))} onSelect={onMinute} formatItem={(v) => pad2(v)} />
-                      </View>
-                    )}
+        {/* Bottom Sheet Modal for Add/Edit */}
+        {showBottomSheet && (
+          <Modal transparent statusBarTranslucent animationType="none" visible={showBottomSheet} onRequestClose={() => setShowBottomSheet(false)}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={{ flex: 1 }}
+            >
+              <View style={styles.modalRoot}>
+                <Animated.View style={[styles.modalBackdropFill, backdropStyle]}>
+                  <Pressable
+                    style={{ flex: 1 }}
+                    onPress={() => {
+                      animateSheetClose(() => {
+                        setShowBottomSheet(false);
+                        resetEditing();
+                      });
+                    }}
+                  />
+                </Animated.View>
+                <Animated.View style={[styles.bottomSheetContainer, sheetStyle]} onLayout={() => animateSheetOpen()}>
+                  <View style={styles.sheetHeader}>
+                    <Text style={styles.sheetTitle}>{sheetMode === 'add' || sheetMode === 'quick' ? 'Yeni Hatırlatma' : 'Hatırlatmayı Düzenle'}</Text>
+                    <TouchableOpacity
+                      style={styles.closeButton}
+                      onPress={() => {
+                        animateSheetClose(() => {
+                          setShowBottomSheet(false);
+                          resetEditing();
+                        });
+                      }}
+                    >
+                      <Ionicons name="close" size={24} color={theme.colors.text} />
+                    </TouchableOpacity>
                   </View>
-                );
-              })()}
 
-              <View style={{ gap: 10 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ color: theme.colors.textSecondary }}>Seçilen</Text>
-                  <Text style={{ color: theme.colors.text, fontWeight: '700' }}>{iosPickerDate.toLocaleString()}</Text>
-                </View>
+                  <TextInput
+                    style={styles.input}
+                    value={sheetMode === 'add' || sheetMode === 'quick' ? newTitle : editingTitle}
+                    onChangeText={sheetMode === 'add' || sheetMode === 'quick' ? setNewTitle : setEditingTitle}
+                    placeholder="Hatırlatma başlığı"
+                    placeholderTextColor={theme.colors.muted}
+                    autoFocus={sheetMode === 'quick'}
+                  />
+
+                  {sheetMode === 'add' && (
+                    <TouchableOpacity
+                      style={styles.dateButton}
+                      onPress={handleOpenDatePicker}
+                      onPressIn={() => hapticsEnabled && Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    >
+                      <Ionicons name="calendar-outline" size={20} color={theme.dark ? theme.colors.background : '#ffffff'} />
+                      <Text style={styles.dateButtonText}>Tarih & Saat Seç</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <Text style={styles.datePreview}>{formatDateTime(sheetMode === 'add' || sheetMode === 'quick' ? newDueDate : editingDueDate)}</Text>
+
+                  <TouchableOpacity
+                    style={styles.primaryButton}
+                    onPress={sheetMode === 'add' || sheetMode === 'quick' ? handleAddReminder : handleUpdateReminder}
+                    onPressIn={() => hapticsEnabled && Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    disabled={sheetMode === 'add' || sheetMode === 'quick' ? saving : updating}
+                  >
+                    <Text style={styles.primaryButtonText}>
+                      {sheetMode === 'add' || sheetMode === 'quick' ? (saving ? 'Kaydediliyor...' : 'Kaydet') : updating ? 'Güncelleniyor...' : 'Güncelle'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {error ? <Text style={styles.errorText}>{error}</Text> : null}
+                </Animated.View>
               </View>
+            </KeyboardAvoidingView>
+          </Modal>
+        )}
 
-              {androidPickerStep !== 'time' ? null : (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      hapticsEnabled && Haptics.selectionAsync();
-                      const nd = addHours(1);
-                      setIosPickerDate(nd);
-                      if (Platform.OS === 'android') { setDateText(fmtDateISO(nd)); setTimeText(fmtTime(nd)); }
-                    }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated }}
-                  >
-                    <Text style={{ color: theme.colors.text }}>1 saat sonra</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      hapticsEnabled && Haptics.selectionAsync();
-                      const nd = addHours(3);
-                      setIosPickerDate(nd);
-                      if (Platform.OS === 'android') { setDateText(fmtDateISO(nd)); setTimeText(fmtTime(nd)); }
-                    }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated }}
-                  >
-                    <Text style={{ color: theme.colors.text }}>3 saat sonra</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      hapticsEnabled && Haptics.selectionAsync();
-                      const nd = nextAt(21, 0);
-                      setIosPickerDate(nd);
-                      if (Platform.OS === 'android') { setDateText(fmtDateISO(nd)); setTimeText(fmtTime(nd)); }
-                    }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated }}
-                  >
-                    <Text style={{ color: theme.colors.text }}>Bu akşam 21:00</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      hapticsEnabled && Haptics.selectionAsync();
-                      const d = now(); d.setDate(d.getDate()+1); d.setHours(9,0,0,0);
-                      setIosPickerDate(d);
-                      if (Platform.OS === 'android') { setDateText(fmtDateISO(d)); setTimeText(fmtTime(d)); }
-                    }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated }}
-                  >
-                    <Text style={{ color: theme.colors.text }}>Yarın 09:00</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      hapticsEnabled && Haptics.selectionAsync();
-                      const nd = nextWeekdayAt(6, 10, 0);
-                      setIosPickerDate(nd);
-                      if (Platform.OS === 'android') { setDateText(fmtDateISO(nd)); setTimeText(fmtTime(nd)); }
-                    }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated }}
-                  >
-                    <Text style={{ color: theme.colors.text }}>Hafta sonu</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => {
-                      hapticsEnabled && Haptics.selectionAsync();
-                      const nd = nextWeekdayAt(1, 9, 0);
-                      setIosPickerDate(nd);
-                      if (Platform.OS === 'android') { setDateText(fmtDateISO(nd)); setTimeText(fmtTime(nd)); }
-                    }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceElevated }}
-                  >
-                    <Text style={{ color: theme.colors.text }}>Pazartesi 09:00</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              <View style={[styles.iosPickerActions, { paddingBottom: 8 }]}>
-                <TouchableOpacity
-                  onPress={() => setShowIOSPicker(false)}
-                  style={[styles.actionButton, styles.cancelButton, { flex: 1 }]}
+        {/* Custom Date Time Picker */}
+        {showDatePicker && (
+          <Modal transparent statusBarTranslucent animationType="none" visible={showDatePicker} onRequestClose={handleDatePickerCancel}>
+            <Pressable style={styles.modalRoot} onPress={handleDatePickerCancel}>
+              <Animated.View style={[{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' }]} />
+              <Pressable onPress={(e) => e.stopPropagation()}>
+                <Animated.View
+                  entering={FadeIn.duration(150)}
+                  exiting={FadeOut.duration(150)}
+                  style={styles.customPickerContainer}
                 >
-                  <Text style={styles.actionButtonTextOnSurface}>İptal</Text>
-                </TouchableOpacity>
-                {androidPickerStep === 'date' ? (
-                  <TouchableOpacity
-                    onPress={() => setAndroidPickerStep('time')}
-                    style={[styles.actionButton, styles.saveButton, { flex: 1 }]}
-                  >
-                    <Text style={[styles.actionButtonText, { color: theme.dark ? theme.colors.background : '#ffffff' }]}>Tarihi Onayla</Text>
-                  </TouchableOpacity>
+                <View style={styles.pickerHeader}>
+                  <Text style={styles.pickerTitle}>
+                    {pickerStep === 'date' ? 'Tarih Seç' : 'Saat Seç'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      style={[styles.pickerStepButton, pickerStep === 'date' && styles.pickerStepButtonActive]}
+                      onPress={() => setPickerStep('date')}
+                    >
+                      <Ionicons name="calendar" size={18} color={pickerStep === 'date' ? theme.colors.primary : theme.colors.textSecondary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.pickerStepButton, pickerStep === 'time' && styles.pickerStepButtonActive]}
+                      onPress={() => setPickerStep('time')}
+                    >
+                      <Ionicons name="time" size={18} color={pickerStep === 'time' ? theme.colors.primary : theme.colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {pickerStep === 'date' ? (
+                  <View style={styles.pickerContent}>
+                    {(() => {
+                      const y = pickerDate.getFullYear();
+                      const m = pickerDate.getMonth() + 1;
+                      const d = pickerDate.getDate();
+
+                      const years = Array.from({ length: 11 }, (_, i) => y - 5 + i);
+                      const months = Array.from({ length: 12 }, (_, i) => i + 1);
+                      const dim = daysInMonth(y, m);
+                      const days = Array.from({ length: dim }, (_, i) => i + 1);
+
+                      const monthNames = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+                      const onDay = (idx) => {
+                        const day = days[idx];
+                        setPickerDate((prev) => setYMD(prev, y, m, day));
+                      };
+                      const onMonth = (idx) => {
+                        const month = months[idx];
+                        setPickerDate((prev) => setYMD(prev, y, month, d));
+                      };
+                      const onYear = (idx) => {
+                        const year = years[idx];
+                        setPickerDate((prev) => setYMD(prev, year, m, d));
+                      };
+
+                      return (
+                        <View style={styles.wheelContainer}>
+                          <WheelColumn
+                            data={days}
+                            selectedIndex={Math.max(0, d - 1)}
+                            onSelect={onDay}
+                            theme={theme}
+                          />
+                          <WheelColumn
+                            data={months}
+                            selectedIndex={Math.max(0, m - 1)}
+                            onSelect={onMonth}
+                            formatItem={(item) => monthNames[item - 1]}
+                            theme={theme}
+                          />
+                          <WheelColumn
+                            data={years}
+                            selectedIndex={Math.max(0, years.indexOf(y))}
+                            onSelect={onYear}
+                            theme={theme}
+                          />
+                        </View>
+                      );
+                    })()}
+                  </View>
                 ) : (
-                  <TouchableOpacity
-                    onPress={() => {
-                      const finalDate = clampFuture(iosPickerDate);
-                      if (pickerTarget === 'new') {
-                        setNewDueDate(finalDate);
-                      } else {
-                        setEditingDueDate(finalDate);
-                      }
-                      showToast('Tarih ayarlandı', finalDate.toLocaleString(), 1800);
-                      animateClose(() => setShowIOSPicker(false));
-                    }}
-                    style={[styles.actionButton, styles.saveButton, { flex: 1 }]}
-                  >
-                    <Text style={[styles.actionButtonText, { color: theme.dark ? theme.colors.background : '#ffffff' }]}>Saati Onayla</Text>
-                  </TouchableOpacity>
+                  <View style={styles.pickerContent}>
+                    {(() => {
+                      const hh = pickerDate.getHours();
+                      const mm = pickerDate.getMinutes();
+
+                      const hours = Array.from({ length: 24 }, (_, i) => i);
+                      const minutes = Array.from({ length: 60 }, (_, i) => i);
+
+                      const onHour = (idx) => {
+                        const hour = hours[idx];
+                        setPickerDate((prev) => {
+                          const nd = new Date(prev);
+                          nd.setHours(hour);
+                          return nd;
+                        });
+                      };
+
+                      const onMinute = (idx) => {
+                        const minute = minutes[idx];
+                        setPickerDate((prev) => {
+                          const nd = new Date(prev);
+                          nd.setMinutes(minute);
+                          return nd;
+                        });
+                      };
+
+                      return (
+                        <View style={styles.wheelContainer}>
+                          <WheelColumn
+                            data={hours}
+                            selectedIndex={Math.max(0, hours.indexOf(hh))}
+                            onSelect={onHour}
+                            formatItem={(v) => pad2(v)}
+                            theme={theme}
+                          />
+                          <Text style={styles.wheelSeparator}>:</Text>
+                          <WheelColumn
+                            data={minutes}
+                            selectedIndex={Math.max(0, minutes.indexOf(mm))}
+                            onSelect={onMinute}
+                            formatItem={(v) => pad2(v)}
+                            theme={theme}
+                          />
+                        </View>
+                      );
+                    })()}
+                  </View>
                 )}
-              </View>
-            </Animated.View>
-          </View>
-        </Modal>
-      )}
-    </Animated.View>
+
+                <View style={styles.pickerPreview}>
+                  <Text style={styles.pickerPreviewLabel}>Seçilen Tarih</Text>
+                  <Text style={styles.pickerPreviewText}>{formatDateTime(pickerDate)}</Text>
+                </View>
+
+                <View style={styles.pickerActions}>
+                  <TouchableOpacity
+                    style={[styles.pickerButton, styles.pickerCancelButton]}
+                    onPress={handleDatePickerCancel}
+                  >
+                    <Text style={styles.pickerCancelButtonText}>İptal</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.pickerButton, styles.pickerConfirmButton]}
+                    onPress={handleDatePickerConfirm}
+                    onPressIn={() => hapticsEnabled && Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                  >
+                    <Text style={styles.pickerConfirmButtonText}>Tamam</Text>
+                  </TouchableOpacity>
+                </View>
+              </Animated.View>
+              </Pressable>
+            </Pressable>
+          </Modal>
+        )}
+      </Animated.View>
+    </GestureHandlerRootView>
   );
 };
 
