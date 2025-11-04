@@ -48,6 +48,12 @@ import {
   loadReminderNotificationMap,
   saveReminderNotificationMap,
 } from '../lib/reminderNotificationStore';
+import {
+  setupNotificationChannels,
+  scheduleReminderNotification,
+  cancelReminderNotification,
+  requestNotificationPermissions,
+} from '../lib/notificationService';
 
 // Relative time formatter
 const getRelativeTime = (date) => {
@@ -344,7 +350,7 @@ const RemindersScreen = () => {
       if (!existingId) return;
 
       try {
-        await Notifications.cancelScheduledNotificationAsync(existingId);
+        await cancelReminderNotification(existingId);
       } catch (err) {
         console.warn('Reminder notification cancel failed', err);
       } finally {
@@ -373,40 +379,25 @@ const RemindersScreen = () => {
       const existingId = notificationMapRef.current[reminder.id];
       if (existingId) {
         try {
-          await Notifications.cancelScheduledNotificationAsync(existingId);
+          await cancelReminderNotification(existingId);
         } catch (err) {
           console.warn('Existing reminder notification cancel failed', err);
         }
       }
 
       try {
-        // Android için bildirim izinlerini kontrol et
-        if (Platform.OS === 'android') {
-          const { status } = await Notifications.getPermissionsAsync();
-          if (status !== 'granted') {
-            const { status: newStatus } = await Notifications.requestPermissionsAsync();
-            if (newStatus !== 'granted') {
-              showToast('Uyarı', 'Bildirim izni verilmedi', 2000);
-              return;
-            }
-          }
+        // Setup high-priority notification channels
+        await setupNotificationChannels();
+
+        // Request permissions with Firebase fallback
+        const hasPermission = await requestNotificationPermissions();
+        if (!hasPermission) {
+          showToast('Uyarı', 'Bildirim izni verilmedi', 2000);
+          return;
         }
 
-        const notificationId = await Notifications.scheduleNotificationAsync({
-          content: {
-            title: 'Hatırlatıcı ⏰',
-            body: `${reminder.title ?? 'Hatırlatma'} zamanı geldi.`,
-            data: { screen: 'Reminders', reminderId: reminder.id },
-            sound: true,
-            priority: 'high',
-            vibrate: [0, 250, 250, 250],
-          },
-          trigger: {
-            type: 'date',
-            date: dueDate,
-            channelId: 'default',
-          },
-        });
+        // Schedule with maximum priority settings for battery optimization bypass
+        const notificationId = await scheduleReminderNotification(reminder);
 
         const updated = {
           ...notificationMapRef.current,

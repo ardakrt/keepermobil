@@ -47,15 +47,29 @@ import { supabase } from './lib/supabaseClient';
 import { BIOMETRIC_ENABLED_KEY, BIOMETRIC_SESSION_KEY, REMEMBER_KEY, REMEMBER_EMAIL_KEY, REMEMBER_PASSWORD_KEY, SESSION_KEY } from './lib/storageKeys';
 import { localAuth } from './lib/localAuth';
 
-// Setup
+// Setup - High importance channel for bypassing battery optimization
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
     shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
+    priority: Notifications.AndroidNotificationPriority.HIGH,
   }),
 });
+
+// Create high importance notification channel for Android
+if (Platform.OS === 'android') {
+  Notifications.setNotificationChannelAsync('reminders', {
+    name: 'Hatırlatıcılar',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#FF231F7C',
+    bypassDnd: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    sound: 'default',
+  });
+}
 
 const Tab = createBottomTabNavigator();
 const NotesStack = createNativeStackNavigator();
