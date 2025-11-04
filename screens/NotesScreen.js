@@ -98,26 +98,57 @@ const NotesScreen = ({ navigation, route }) => {
         header: {
           paddingTop: 8,
           paddingBottom: 12,
-          gap: 6,
+          gap: 12,
         },
-        titleRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-        title: { fontSize: 28, fontWeight: '800', color: theme.colors.text },
-        count: { color: theme.colors.muted },
+        searchRow: {
+          flexDirection: 'row',
+          gap: 8,
+        },
+        iconButton: {
+          width: 48,
+          height: 48,
+          borderRadius: 12,
+          backgroundColor: theme.colors.surface,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        filterContainer: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        },
+        filterLabel: {
+          fontSize: 14,
+          fontWeight: '600',
+          color: theme.colors.textSecondary,
+        },
+        multiSelectToolbar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        multiSelectText: {
+          fontSize: 16,
+          fontWeight: '600',
+          color: theme.colors.text,
+        },
+        multiSelectActions: {
+          flexDirection: 'row',
+          gap: 8,
+        },
         toolbar: { flexDirection: 'row', alignItems: 'center', gap: 8 },
         searchInput: {
           flex: 1,
-          height: 44,
+          height: 48,
           borderRadius: 12,
           borderWidth: 1,
-          borderColor: accent && theme.colors.borderTinted
-            ? theme.colors.borderTinted
-            : theme.colors.border,
-          backgroundColor: accent && theme.colors.surfaceElevatedTinted
-            ? theme.colors.surfaceElevatedTinted
-            : theme.colors.surfaceElevated,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surfaceElevated,
           color: theme.colors.text,
-          paddingHorizontal: 14,
-          fontSize: 15,
+          paddingHorizontal: 16,
+          fontSize: 16,
         },
         pillButton: {
           height: 40,
@@ -922,52 +953,59 @@ const NotesScreen = ({ navigation, route }) => {
         </TouchableOpacity>
       </View>
 
+      {/* Modern Toolbar */}
       <View style={[styles.header, styles.contentPad]}>
-        <View style={styles.titleRow}>
-          <Text style={styles.title}>Tüm notlar</Text>
-          {!multiSelect ? (
-            <Text style={styles.count}>{filteredNotes.length} not</Text>
-          ) : (
-            <Text style={styles.count}>{selectedIds.length} seçili</Text>
-          )}
-        </View>
         {!multiSelect ? (
-          <View style={styles.toolbar}>
-            <TextInput
-              style={styles.searchInput}
-              value={query}
-              onChangeText={setQuery}
-              placeholder="Ara: başlık veya içerik"
-              placeholderTextColor={theme.colors.muted}
-            />
-            <TouchableOpacity style={styles.pillButton} onPress={() => setGrid((g) => !g)}>
-              <Text style={styles.pillText}>{grid ? 'Liste' : 'Izgara'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.pillButton} onPress={() => setShowSort(true)}>
-              <Text style={styles.pillText}>Sırala</Text>
-            </TouchableOpacity>
-          </View>
+          <>
+            <View style={styles.searchRow}>
+              <TextInput
+                style={styles.searchInput}
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Notlarda ara..."
+                placeholderTextColor={theme.colors.muted}
+              />
+              <TouchableOpacity style={styles.iconButton} onPress={() => setGrid((g) => !g)}>
+                <MaterialCommunityIcons 
+                  name={grid ? 'view-list' : 'view-grid'} 
+                  size={22} 
+                  color={theme.colors.text} 
+                />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iconButton} onPress={() => setShowSort(true)}>
+                <MaterialCommunityIcons name="sort" size={22} color={theme.colors.text} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.filterContainer}>
+              <Text style={styles.filterLabel}>{filteredNotes.length} not</Text>
+            </View>
+          </>
         ) : (
-          <View style={[styles.toolbar, { justifyContent: 'space-between' }]}>            
-            <TouchableOpacity style={styles.pillButton} onPress={handleSelectAllOrClear}>
-              <Text style={styles.pillText}>{selectAllLabel}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.pillButton, { borderColor: theme.colors.danger }]}
-              onPress={handleBulkDelete}
-              disabled={bulkDeleting || selectedIds.length === 0}
-            >
-              <Text style={[styles.pillText, { color: theme.colors.danger }]}>{bulkDeleting ? 'Siliniyor...' : 'Sil'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.pillButton}
-              onPress={() => {
-                setMultiSelect(false);
-                setSelectedIds([]);
-              }}
-            >
-              <Text style={styles.pillText}>Vazgeç</Text>
-            </TouchableOpacity>
+          <View style={styles.multiSelectToolbar}>            
+            <Text style={styles.multiSelectText}>{selectedIds.length} seçili</Text>
+            <View style={styles.multiSelectActions}>
+              <TouchableOpacity style={styles.pillButton} onPress={handleSelectAllOrClear}>
+                <Text style={styles.pillText}>{selectAllLabel}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.pillButton, { borderColor: theme.colors.danger }]}
+                onPress={handleBulkDelete}
+                disabled={bulkDeleting || selectedIds.length === 0}
+              >
+                <Text style={[styles.pillText, { color: theme.colors.danger }]}>
+                  {bulkDeleting ? 'Siliniyor...' : 'Sil'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.pillButton}
+                onPress={() => {
+                  setMultiSelect(false);
+                  setSelectedIds([]);
+                }}
+              >
+                <Text style={styles.pillText}>İptal</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </View>
