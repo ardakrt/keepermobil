@@ -95,8 +95,8 @@ const AuthScreen = ({ onAuthSuccess }) => {
     height: compressedHeader.interpolate({ inputRange: [0,1], outputRange: [145, 105] }),
     overflow: 'hidden',
   };
-  const avatarScale = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.8] });
-  const displayOpacity = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.55] });
+  const avatarScale = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.85] });
+  const displayOpacity = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.7] });
   // Header sıkıştığında arkaya koyu bir overlay + altta gradient ekle
   const overlayOpacity = compressedHeader.interpolate({ inputRange: [0, 0.0001, 1], outputRange: [0, 0, 0.65] });
 
@@ -605,20 +605,19 @@ const AuthScreen = ({ onAuthSuccess }) => {
       const ch = chars[i] || '';
       const filled = i < chars.length;
   const showChar = filled ? '●' : '';
+      const isActive = chars.length === i && !pinErrorRef.current;
+      
       const baseStyle = {
         width: 46,
         height: 56,
         borderRadius: 12,
         borderWidth: 2,
-        borderColor: pinErrorRef.current ? theme.colors.danger : (filled ? theme.colors.primary : theme.colors.border),
+        borderColor: pinErrorRef.current ? theme.colors.danger : (isActive || filled ? theme.colors.primary : theme.colors.border),
         backgroundColor: pinErrorRef.current ? theme.colors.danger + '08' : (filled ? theme.colors.primary + '08' : theme.colors.surfaceElevated),
         alignItems: 'center',
         justifyContent: 'center',
       };
-      const focusBorder = chars.length === i && !pinErrorRef.current ? { 
-        borderColor: theme.colors.primary,
-      } : null;
-      const isActive = chars.length === i && !pinErrorRef.current;
+      
       const successBg = successFlash.interpolate({ inputRange: [0, 1], outputRange: [baseStyle.backgroundColor, theme.colors.success + '22'] });
       const errorBgOpacity = errorFlash.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
       return (
@@ -626,7 +625,6 @@ const AuthScreen = ({ onAuthSuccess }) => {
           key={i}
           style={[
             baseStyle,
-            focusBorder,
             {
               backgroundColor: successBg,
               shadowColor: isActive ? theme.colors.primary : (filled ? theme.colors.primary : 'transparent'),
@@ -634,7 +632,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
               shadowRadius: isActive ? 10 : (filled ? 4 : 0),
               shadowOffset: { width: 0, height: isActive ? 4 : 2 },
               elevation: isActive ? 6 : (filled ? 2 : 0),
-              transform: [{ scale: isActive ? 1.06 : (filled ? 1.02 : 1) }],
+              transform: [{ scale: isActive ? 1.05 : (filled ? 1.01 : 1) }],
             },
           ]}
         >
@@ -787,6 +785,21 @@ const AuthScreen = ({ onAuthSuccess }) => {
   const getDisplayName = () => {
     if (firstName.trim()) return firstName.trim();
     return getDisplayNameFromEmail(email);
+  };
+
+  const getTimeBasedGreeting = () => {
+    const hour = new Date().getHours();
+    const name = getDisplayName();
+    
+    if (hour >= 6 && hour < 9) {
+      return `Günaydın ${name}`;
+    } else if (hour >= 9 && hour < 17) {
+      return `İyi Günler ${name}`;
+    } else if (hour >= 17 && hour < 24) {
+      return `İyi Akşamlar ${name}`;
+    } else {
+      return `İyi Geceler ${name}`;
+    }
   };
 
   const handleForgotPassword = async () => {
@@ -999,7 +1012,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
                   </RNAnimated.View>
                   <RNAnimated.View style={{ opacity: displayOpacity }}>
                     <Text style={[styles.title, { fontSize: 20, fontWeight: '600', textAlign: 'center' }]}>
-                      {getDisplayName()}, hoş geldiniz
+                      {getTimeBasedGreeting()}
                     </Text>
                   </RNAnimated.View>
                 </RNAnimated.View>
