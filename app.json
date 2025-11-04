@@ -70,7 +70,8 @@
         }
       ],
       "@react-native-firebase/messaging",
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/withAndroidManifestFix.js"
     ],
     "owner": "ardkaratas"
   }
