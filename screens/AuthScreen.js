@@ -92,7 +92,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
   const compressedHeader = useRef(new RNAnimated.Value(0)).current; // 0 normal, 1 compact
   // Header artık tamamen kaybolmasın: 0 -> normal, 1 -> kısmen sıkışmış
   const headerAnimatedStyle = {
-    height: compressedHeader.interpolate({ inputRange: [0,1], outputRange: [160, 110] }),
+    height: compressedHeader.interpolate({ inputRange: [0,1], outputRange: [145, 105] }),
     overflow: 'hidden',
   };
   const avatarScale = compressedHeader.interpolate({ inputRange: [0,1], outputRange: [1, 0.8] });
@@ -617,7 +617,6 @@ const AuthScreen = ({ onAuthSuccess }) => {
       };
       const focusBorder = chars.length === i && !pinErrorRef.current ? { 
         borderColor: theme.colors.primary,
-        borderWidth: 2.5,
       } : null;
       const isActive = chars.length === i && !pinErrorRef.current;
       const successBg = successFlash.interpolate({ inputRange: [0, 1], outputRange: [baseStyle.backgroundColor, theme.colors.success + '22'] });
@@ -901,7 +900,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
           borderColor: theme.colors.primary,
           backgroundColor: theme.colors.surfaceElevated,
         },
-        actionPillsRow: { flexDirection: 'row', gap: 10, marginTop: 4, flexWrap: 'wrap' },
+        actionPillsRow: { flexDirection: 'row', gap: 10, marginTop: 0, flexWrap: 'wrap' },
         pillButton: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -981,13 +980,13 @@ const AuthScreen = ({ onAuthSuccess }) => {
                     pointerEvents="none"
                   />
                 </RNAnimated.View>
-                <RNAnimated.View style={{ alignItems: 'center', gap: 16, transform: [{ scale: avatarScale }] }}>
-                  <RNAnimated.View style={[styles.avatar, { width: 80, height: 80, borderRadius: 40 }]}>
+                <RNAnimated.View style={{ alignItems: 'center', gap: 10, transform: [{ scale: avatarScale }] }}>
+                  <RNAnimated.View style={[styles.avatar, { width: 100, height: 100, borderRadius: 50 }]}>
                     {avatarUrl ? (
                       <>
                         <Image
                           source={{ uri: avatarUrl }}
-                          style={[styles.avatarImage, { borderRadius: 40 }]}
+                          style={[styles.avatarImage, { borderRadius: 50 }]}
                           onLoadStart={() => setAvatarLoading(true)}
                           onLoadEnd={() => setAvatarLoading(false)}
                           onError={() => setAvatarUrl(null)}
@@ -995,12 +994,12 @@ const AuthScreen = ({ onAuthSuccess }) => {
                         {avatarLoading && <ActivityIndicator style={{position: 'absolute'}}/>}
                       </>
                     ) : (
-                      <Text style={[styles.avatarText, { fontSize: 28 }]}>{(firstName?.[0] || getInitialsFromEmail(email)).toUpperCase()}</Text>
+                      <Text style={[styles.avatarText, { fontSize: 36 }]}>{(firstName?.[0] || getInitialsFromEmail(email)).toUpperCase()}</Text>
                     )}
                   </RNAnimated.View>
                   <RNAnimated.View style={{ opacity: displayOpacity }}>
-                    <Text style={[styles.title, { fontSize: 22, fontWeight: '600', textAlign: 'center' }]}>
-                      Hoş geldiniz, {getDisplayName()}
+                    <Text style={[styles.title, { fontSize: 20, fontWeight: '600', textAlign: 'center' }]}>
+                      {getDisplayName()}, hoş geldiniz
                     </Text>
                   </RNAnimated.View>
                 </RNAnimated.View>
@@ -1024,7 +1023,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
               </View>
 
               {!verificationMode ? (
-                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 16 }}>
+                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 12 }}>
                 <View style={{ alignItems: 'center', gap: 6 }}>
                   <Text style={{ fontSize: 14, color: theme.colors.textSecondary, textAlign: 'center', fontWeight: '500' }}>
                     PIN kodunuzu giriniz
@@ -1233,7 +1232,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
               ) : null}
 
               {mode === 'signUp' && signStep === 'pin' ? (
-                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 16 }}>
+                <Animated.View entering={FadeInDown.duration(200)} style={{ gap: 12 }}>
                   <RNAnimated.View
                     style={{
                       transform: [
