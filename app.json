@@ -1,7 +1,7 @@
 {
   "expo": {
-    "scheme": "kisiselnot",
-    "name": "Kisisel Not Kasasi",
+    "scheme": "com.ardakaratas.test",
+    "name": "Keeper",
     "slug": "test",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -22,7 +22,7 @@
         "backgroundColor": "#f1f1f2"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.ardkaratas.test",
+      "package": "com.ardakaratas.test",
       "googleServicesFile": "./google-services.json",
       "intentFilters": [
         {

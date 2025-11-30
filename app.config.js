@@ -27,8 +27,20 @@ module.exports = ({ config }) => {
     return p;
   });
 
+  // Add expo-camera plugin for QR code scanning
+  plugins.push([
+    'expo-camera',
+    {
+      cameraPermission: 'Keeper uygulamasının QR kodlarını taramak için kameranıza erişmesine izin verin.',
+    },
+  ]);
+
+  // Add expo-web-browser for Google Auth
+  plugins.push('expo-web-browser');
+
   return {
     ...config,
+    scheme: config.scheme || 'kisiselnot',
     android: {
       ...(config.android || {}),
       googleServicesFile: androidGoogleServicesPath,
@@ -38,6 +50,7 @@ module.exports = ({ config }) => {
       ...(config.extra || {}),
       supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
       supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+      basisTheoryApiKey: process.env.EXPO_PUBLIC_BASIS_THEORY_API_KEY,
       eas: config.extra?.eas,
     },
   };

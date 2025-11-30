@@ -25,6 +25,8 @@ import { HUDProvider } from './lib/hud';
 import { ConfirmProvider } from './lib/confirm';
 import { PrefsProvider, usePrefs } from './lib/prefs';
 import { BadgeProvider, useBadges } from './lib/badges';
+import { AuthenticatorProvider } from './lib/authenticator';
+import { PushAuthProvider } from './lib/PushAuthContext';
 import messaging from '@react-native-firebase/messaging';
 import * as SecureStore from 'expo-secure-store';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -40,7 +42,10 @@ import SettingsScreen from './screens/SettingsScreen';
 import WalletScreen from './screens/WalletScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
+import AuthenticatorScreen from './screens/AuthenticatorScreen';
+import DriveScreen from './screens/DriveScreen';
 import Avatar from './components/Avatar';
+import PushAuthModal from './components/PushAuthModal';
 
 // Other Imports
 import { supabase } from './lib/supabaseClient';
@@ -62,12 +67,15 @@ Notifications.setNotificationHandler({
 if (Platform.OS === 'android') {
   Notifications.setNotificationChannelAsync('reminders', {
     name: 'Hatırlatıcılar',
-    importance: Notifications.AndroidImportance.HIGH,
+    importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
     lightColor: '#FF231F7C',
     bypassDnd: true,
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     sound: 'default',
+    enableLights: true,
+    enableVibrate: true,
+    showBadge: true,
   });
 }
 
@@ -105,7 +113,7 @@ const BlurredTabBar = ({ state, descriptors, navigation, insets, styles }) => {
       <View
         style={[
           styles.blurViewStyle,
-          { backgroundColor: 'transparent' }
+          { backgroundColor: theme.colors.surface }
         ]}
       >
         <View
@@ -122,10 +130,8 @@ const BlurredTabBar = ({ state, descriptors, navigation, insets, styles }) => {
               if (!isFocused && !event.defaultPrevented) {
                 if (hapticsEnabled) {
                   try {
-                    // Önce Expo Haptics dene
                     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   } catch {
-                    // Expo çalışmazsa Native Vibration dene
                     try {
                       Vibration.vibrate(50);
                     } catch {}
@@ -186,7 +192,7 @@ const BlurredTabBar = ({ state, descriptors, navigation, insets, styles }) => {
   );
 };
 
-const TabIcon = ({ name, color, size, focused, routeName }) => {
+const TabIcon = React.memo(({ name, color, size, focused, routeName }) => {
   const { counts } = useBadges();
   const { reduceMotion } = usePrefs();
   const { theme } = useAppTheme();
@@ -218,12 +224,12 @@ const TabIcon = ({ name, color, size, focused, routeName }) => {
       ) : null}
     </Animated.View>
   );
-};
+});
 
 function AppInner() {
   const { theme, mode } = useAppTheme();
 
-  const HeaderTitle = () => {
+  const HeaderTitle = React.memo(() => {
     const opacity = useSharedValue(0);
     const scale = useSharedValue(0.9);
     const iconRotate = useSharedValue(0);
@@ -277,7 +283,7 @@ function AppInner() {
         </Text>
       </Animated.View>
     );
-  };
+  });
 
   const HeaderPulseBackground = React.useCallback(({ pulseKey }) => {
     const pulse = useSharedValue(0);
@@ -448,13 +454,44 @@ function AppInner() {
     if (!url) return;
     const params = parseParamsFromUrl(url);
     const type = params.type || params['type'];
+    const error = params.error;
+    const errorDescription = params.error_description;
     let email = params.email || params['email'] || undefined;
     let tokenForUi = params.access_token || params.token_hash || params.code || undefined;
+
+    // Hata varsa göster
+    if (error) {
+      const errorMsg = errorDescription
+        ? decodeURIComponent(errorDescription.replace(/\+/g, ' '))
+        : 'Bir hata oluştu';
+
+      if (error === 'otp_expired') {
+        showToast('Link Süresi Doldu', 'Bu link artık geçerli değil. Lütfen yeni bir istek oluşturun.');
+      } else {
+        showToast('Hata', errorMsg);
+      }
+      return;
+    }
+
     try {
       if (params.access_token) {
         const { data, error } = await supabase.auth.setSession({ access_token: params.access_token, refresh_token: params.refresh_token });
-        if (error) console.warn('setSession failed from deep link', error);
-        else email = email || data?.session?.user?.email || undefined;
+        if (error) {
+          console.warn('setSession failed from deep link', error);
+          showToast('Hata', 'Oturum başlatılamadı. Lütfen tekrar deneyin.');
+        } else {
+          email = email || data?.session?.user?.email || undefined;
+
+          // E-posta değişikliği başarılı
+          if (type === 'email_change') {
+            showToast('Başarılı', `E-posta adresiniz ${email} olarak güncellendi!`);
+            // Ana ekrana yönlendir
+            if (navigationRef.isReady()) {
+              navigationRef.reset({ index: 0, routes: [{ name: 'Main' }] });
+            }
+            return;
+          }
+        }
       } else if (params.code) {
         const { data, error } = await supabase.auth.exchangeCodeForSession(params.code);
         if (error) console.warn('exchangeCodeForSession failed', error);
@@ -463,12 +500,14 @@ function AppInner() {
     } catch (err) {
       console.warn('Deep link auth handling error', err);
     }
-    if (type === 'recovery' || params.recovery === 'true' || tokenForUi) {
+
+    // Şifre sıfırlama için ResetPassword ekranına yönlendir
+    if (type === 'recovery' || params.recovery === 'true') {
       const nav = { screen: 'ResetPassword', params: { token: tokenForUi, email } };
       if (navigationRef.isReady()) navigationRef.navigate(nav.screen, nav.params);
       else setPendingNavigation(nav);
     }
-  }, [navigationRef, parseParamsFromUrl]);
+  }, [navigationRef, parseParamsFromUrl, showToast]);
 
   useEffect(() => {
     (async () => {
@@ -769,7 +808,9 @@ function AppInner() {
                         const iconMap = {
                           Notes: focused ? 'note-text' : 'note-text-outline',
                           Reminders: focused ? 'bell-ring' : 'bell-outline',
+                          Drive: focused ? 'google-drive' : 'harddisk',
                           Cüzdan: focused ? 'wallet' : 'wallet-outline',
+                          Authenticator: focused ? 'shield-key' : 'shield-key-outline',
                           Settings: focused ? 'cog' : 'cog-outline',
                         };
                         const iconName = iconMap[route.name] || (focused ? 'circle' : 'circle-outline');
@@ -799,10 +840,24 @@ function AppInner() {
                         </NotesStack.Navigator>
                       )}
                     </Tab.Screen>
+                    <Tab.Screen name="Drive" options={{ headerShown: false, title: 'Drive', tabBarAccessibilityLabel: 'Drive sekmesi' }}>
+                      {() => (
+                        <NotesStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: theme.colors.background } }}>
+                          <NotesStack.Screen name="DriveHome" component={DriveScreen} />
+                        </NotesStack.Navigator>
+                      )}
+                    </Tab.Screen>
                     <Tab.Screen name="Cüzdan" options={{ headerShown: false, title: 'Cüzdan', tabBarAccessibilityLabel: 'Cüzdan sekmesi' }}>
                       {() => (
                         <NotesStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: theme.colors.background } }}>
                           <NotesStack.Screen name="WalletHome" component={WalletScreen} />
+                        </NotesStack.Navigator>
+                      )}
+                    </Tab.Screen>
+                    <Tab.Screen name="Authenticator" options={{ headerShown: false, title: '2FA', tabBarAccessibilityLabel: 'Authenticator sekmesi' }}>
+                      {() => (
+                        <NotesStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: theme.colors.background } }}>
+                          <NotesStack.Screen name="AuthenticatorHome" component={AuthenticatorScreen} />
                         </NotesStack.Navigator>
                       )}
                     </Tab.Screen>
@@ -830,6 +885,34 @@ function AppInner() {
   );
 }
 
+function AppWithAuth() {
+  const [userId, setUserId] = useState(null);
+
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setUserId(session?.user?.id || null);
+    };
+    getUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user?.id || null);
+    });
+
+    return () => subscription?.unsubscribe();
+  }, []);
+
+  return (
+    <AuthenticatorProvider userId={userId}>
+      <PushAuthProvider userId={userId}>
+        <AppInner />
+        {/* 🔑 CRITICAL: PushAuthModal should be at root level */}
+        <PushAuthModal />
+      </PushAuthProvider>
+    </AuthenticatorProvider>
+  );
+}
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -839,7 +922,7 @@ export default function App() {
             <PrefsProvider>
               <BadgeProvider>
                 <SafeAreaProvider>
-                  <AppInner />
+                  <AppWithAuth />
                 </SafeAreaProvider>
               </BadgeProvider>
             </PrefsProvider>
