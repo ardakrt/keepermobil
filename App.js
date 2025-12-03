@@ -15,6 +15,7 @@ import {
   Vibration,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+
 import Animated, { Easing, useAnimatedStyle, useSharedValue, withSequence, withTiming, withSpring, withRepeat } from 'react-native-reanimated';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
@@ -44,6 +45,8 @@ import ProfileScreen from './screens/ProfileScreen';
 import ResetPasswordScreen from './screens/ResetPasswordScreen';
 import AuthenticatorScreen from './screens/AuthenticatorScreen';
 import DriveScreen from './screens/DriveScreen';
+import FileViewerScreen from './screens/FileViewerScreen';
+import DefterScreen from './screens/DefterScreen';
 import Avatar from './components/Avatar';
 import PushAuthModal from './components/PushAuthModal';
 
@@ -196,7 +199,8 @@ const TabIcon = React.memo(({ name, color, size, focused, routeName }) => {
   const { counts } = useBadges();
   const { reduceMotion } = usePrefs();
   const { theme } = useAppTheme();
-  const badge = routeName === 'Reminders' ? (counts['reminders'] || 0) : 0;
+  // Defter sekmesi Reminders badge'ini gösterir
+  const badge = (routeName === 'Reminders' || routeName === 'Defter') ? (counts['reminders'] || 0) : 0;
 
   const animatedStyle = useAnimatedStyle(() => {
       if (reduceMotion) {
@@ -378,9 +382,16 @@ function AppInner() {
         if (biometricActive) {
           try {
             const biometricSession = JSON.parse(biometricSessionRaw);
-            const auth = await localAuth.authenticateAsync({ promptMessage: 'Parmak izi ile giriş yapın' });
+            const auth = await localAuth.authenticateAsync({ 
+              promptMessage: 'Parmak izi ile giriş yapın',
+              cancelLabel: 'Vazgeç',
+            });
             if (!auth.success) {
-              Alert.alert('Giriş engellendi', 'Parmak izi doğrulaması iptal edildi.');
+              Alert.alert(
+                '🔒 Giriş İptal Edildi', 
+                'Parmak izi doğrulaması tamamlanmadı.\n\nUygulamaya erişmek için tekrar deneyin.',
+                [{ text: 'Tamam', style: 'default' }]
+              );
               return;
             }
             const { data, error } = await supabase.auth.setSession({ access_token: biometricSession?.access_token, refresh_token: biometricSession?.refresh_token });
@@ -806,8 +817,7 @@ function AppInner() {
                       ...tabScreenOptions,
                       tabBarIcon: ({ color, size, focused }) => {
                         const iconMap = {
-                          Notes: focused ? 'note-text' : 'note-text-outline',
-                          Reminders: focused ? 'bell-ring' : 'bell-outline',
+                          Defter: focused ? 'notebook' : 'notebook-outline',
                           Drive: focused ? 'google-drive' : 'harddisk',
                           Cüzdan: focused ? 'wallet' : 'wallet-outline',
                           Authenticator: focused ? 'shield-key' : 'shield-key-outline',
@@ -819,45 +829,39 @@ function AppInner() {
                     })}
                   >
                     <Tab.Screen
-                      name="Notes"
+                      name="Defter"
                       options={{
                         headerShown: false,
-                        title: 'Notlar',
-                        tabBarAccessibilityLabel: 'Notlar sekmesi',
+                        title: 'Defter',
+                        tabBarAccessibilityLabel: 'Defter sekmesi',
                       }}
                     >
                       {() => (
                         <NotesStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.colors.background } }}>
-                          <NotesStack.Screen name="NotesHome" component={NotesScreen} />
+                          <NotesStack.Screen name="DefterHome" component={DefterScreen} />
                           <NotesStack.Screen name="NoteDetail" component={NoteDetailScreen} options={{ animation: 'fade' }} />
-                        </NotesStack.Navigator>
-                      )}
-                    </Tab.Screen>
-                    <Tab.Screen name="Reminders" options={{ headerShown: false, title: 'Hatırlatmalar', tabBarAccessibilityLabel: 'Hatırlatmalar sekmesi' }}>
-                      {() => (
-                        <NotesStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: theme.colors.background } }}>
-                          <NotesStack.Screen name="RemindersHome" component={RemindersScreen} />
-                        </NotesStack.Navigator>
-                      )}
-                    </Tab.Screen>
-                    <Tab.Screen name="Drive" options={{ headerShown: false, title: 'Drive', tabBarAccessibilityLabel: 'Drive sekmesi' }}>
-                      {() => (
-                        <NotesStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: theme.colors.background } }}>
-                          <NotesStack.Screen name="DriveHome" component={DriveScreen} />
                         </NotesStack.Navigator>
                       )}
                     </Tab.Screen>
                     <Tab.Screen name="Cüzdan" options={{ headerShown: false, title: 'Cüzdan', tabBarAccessibilityLabel: 'Cüzdan sekmesi' }}>
                       {() => (
-                        <NotesStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: theme.colors.background } }}>
+                        <NotesStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.colors.background } }}>
                           <NotesStack.Screen name="WalletHome" component={WalletScreen} />
                         </NotesStack.Navigator>
                       )}
                     </Tab.Screen>
                     <Tab.Screen name="Authenticator" options={{ headerShown: false, title: '2FA', tabBarAccessibilityLabel: 'Authenticator sekmesi' }}>
                       {() => (
-                        <NotesStack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', contentStyle: { backgroundColor: theme.colors.background } }}>
+                        <NotesStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.colors.background } }}>
                           <NotesStack.Screen name="AuthenticatorHome" component={AuthenticatorScreen} />
+                        </NotesStack.Navigator>
+                      )}
+                    </Tab.Screen>
+                    <Tab.Screen name="Drive" options={{ headerShown: false, title: 'Drive', tabBarAccessibilityLabel: 'Drive sekmesi' }}>
+                      {() => (
+                        <NotesStack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: theme.colors.background } }}>
+                          <NotesStack.Screen name="DriveHome" component={DriveScreen} />
+                          <NotesStack.Screen name="FileViewer" component={FileViewerScreen} options={{ animation: 'slide_from_right', headerShown: true, title: 'Dosya Önizleme', headerTintColor: theme.colors.text, headerStyle: { backgroundColor: theme.colors.background } }} />
                         </NotesStack.Navigator>
                       )}
                     </Tab.Screen>

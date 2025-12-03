@@ -20,6 +20,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '../lib/theme';
 import { usePrefs } from '../lib/prefs';
+import CardBrandIcon from './CardBrandIcon';
 
 const { height: SCREEN_HEIGHT, width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -88,12 +89,9 @@ const CardActionSheet = ({ visible, card, onClose, onEdit, onDelete, onCopy, onS
 
   if (!visible || !card) return null;
 
-  const formatMaskedNumber = (number) => {
-    if (!number) return '•••• •••• •••• ••••';
-    const cleaned = number.replace(/\D/g, '');
-    const first4 = cleaned.substring(0, 4);
-    const last4 = cleaned.substring(cleaned.length - 4);
-    return `${first4} •••• •••• ${last4}`;
+  const formatMaskedNumber = (lastFour) => {
+    if (!lastFour) return '•••• •••• •••• ••••';
+    return `•••• •••• •••• ${lastFour}`;
   };
 
   const getCardGradient = () => {
@@ -207,65 +205,65 @@ const CardActionSheet = ({ visible, card, onClose, onEdit, onDelete, onCopy, onS
               <View style={[styles.handle, { backgroundColor: theme.colors.border }]} />
             </Animated.View>
 
-          {/* Card Preview */}
-          <View
-            style={[
-              styles.cardPreview,
-              {
-                shadowColor: cardGradient[0],
-                shadowOffset: { width: 0, height: 8 },
-                shadowOpacity: 0.4,
-                shadowRadius: 16,
-                elevation: 12,
-              },
-            ]}
-          >
-            <LinearGradient
-              colors={cardGradient}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.cardGradient}
+            {/* Card Preview */}
+            <View
+              style={[
+                styles.cardPreview,
+                {
+                  shadowColor: cardGradient[0],
+                  shadowOffset: { width: 0, height: 8 },
+                  shadowOpacity: 0.4,
+                  shadowRadius: 16,
+                  elevation: 12,
+                },
+              ]}
             >
-              <View style={styles.cardHeader}>
-                <Text style={styles.cardLabel}>{card.label}</Text>
-                <Ionicons name="card" size={24} color="rgba(255,255,255,0.9)" />
-              </View>
-              <Text style={styles.cardNumber}>{formatMaskedNumber(card.number_enc)}</Text>
-              <View style={styles.cardFooter}>
-                <Text style={styles.cardHolder}>{card.holder_name_enc?.toUpperCase()}</Text>
-                <Text style={styles.cardExpiry}>{card.expiry || '--/--'}</Text>
-              </View>
-            </LinearGradient>
-          </View>
-
-          {/* Title */}
-          <Text style={[styles.title, { color: theme.colors.text }]}>Kartın ile ne yapmak istersin?</Text>
-
-          {/* Action Grid */}
-          <View style={styles.actionsGrid}>
-            {actions.map((action, index) => (
-              <TouchableOpacity
-                key={index}
-                style={[styles.actionCard, { backgroundColor: action.bgColor }]}
-                onPress={action.onPress}
-                onPressIn={() => {
-                  if (hapticsEnabled) {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  }
-                }}
-                activeOpacity={0.7}
+              <LinearGradient
+                colors={cardGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.cardGradient}
               >
-                <View style={[styles.actionIconContainer, { backgroundColor: action.color }]}>
-                  <Ionicons name={action.icon} size={24} color="#FFFFFF" />
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardLabel}>{card.label}</Text>
+                  <CardBrandIcon brand={card.cardBrand} width={50} height={32} />
                 </View>
-                <Text style={[styles.actionLabel, { color: theme.colors.text }]}>
-                  {action.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+                <Text style={styles.cardNumber}>{formatMaskedNumber(card.last_four)}</Text>
+                <View style={styles.cardFooter}>
+                  <Text style={styles.cardHolder}>{card.holder_name_enc?.toUpperCase()}</Text>
+                  <Text style={styles.cardExpiry}>{card.expiry || '--/--'}</Text>
+                </View>
+              </LinearGradient>
+            </View>
 
-          {/* Close Button */}
+            {/* Title */}
+            <Text style={[styles.title, { color: theme.colors.text }]}>Kartın ile ne yapmak istersin?</Text>
+
+            {/* Action Grid */}
+            <View style={styles.actionsGrid}>
+              {actions.map((action, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={[styles.actionCard, { backgroundColor: action.bgColor }]}
+                  onPress={action.onPress}
+                  onPressIn={() => {
+                    if (hapticsEnabled) {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.actionIconContainer, { backgroundColor: action.color }]}>
+                    <Ionicons name={action.icon} size={24} color="#FFFFFF" />
+                  </View>
+                  <Text style={[styles.actionLabel, { color: theme.colors.text }]}>
+                    {action.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {/* Close Button */}
             <TouchableOpacity
               style={[styles.closeButton, { backgroundColor: theme.colors.surfaceElevated }]}
               onPress={onClose}

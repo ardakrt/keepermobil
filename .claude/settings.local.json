@@ -5,7 +5,9 @@
       "WebFetch(domain:pay.enuygun.com)",
       "Bash(node -e:*)",
       "Bash(npm install:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(del index.html)",
+      "Bash(ren:*)"
     ],
     "deny": [],
     "ask": []

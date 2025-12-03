@@ -97,6 +97,14 @@ const AccountActionSheet = ({ visible, account, onClose, onEdit, onDelete, onCop
     if (s.includes('github')) return 'logo-github';
     if (s.includes('apple')) return 'logo-apple';
     if (s.includes('microsoft')) return 'logo-microsoft';
+    if (s.includes('netflix')) return 'play-circle';
+    if (s.includes('spotify')) return 'musical-notes';
+    if (s.includes('amazon')) return 'cart';
+    if (s.includes('youtube')) return 'logo-youtube';
+    if (s.includes('discord')) return 'logo-discord';
+    if (s.includes('reddit')) return 'logo-reddit';
+    if (s.includes('tiktok')) return 'logo-tiktok';
+    if (s.includes('whatsapp')) return 'logo-whatsapp';
     return 'person-circle';
   };
 

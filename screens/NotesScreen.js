@@ -1,52 +1,255 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as Haptics from 'expo-haptics';
 import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  FlatList,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
   View,
+  Text,
+  TouchableOpacity,
+  TextInput,
+  FlatList,
+  Modal,
+  Alert,
   StatusBar,
+  ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { supabase } from '../lib/supabaseClient';
-import { useConfirm } from '../lib/confirm';
-import Animated, { FadeInDown, FadeOutUp, Layout, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
-import { useAppTheme } from '../lib/theme';
+import Animated, { FadeInDown, FadeOutUp, Layout } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import BlurHeader from '../components/BlurHeader';
+import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+import { useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { useAppTheme } from '../lib/theme';
+import { useConfirm } from '../lib/confirm';
+import { supabase } from '../lib/supabaseClient';
 import Avatar from '../components/Avatar';
 
+// Extracted and memoized NoteItem component
+const NoteItem = React.memo(({ item, index, editingId, editingTitle, editingContent, selectedIds, multiSelect, grid, theme, accent, onStartEditing, onToggleSelect, onLongPress, onSave, onCancel, onChangeTitle, onChangeContent, navigation, noteCardSelectedStyle }) => {
+  const isEditing = editingId === item.id;
+  const isSelected = selectedIds.includes(item.id);
 
-import { useFocusEffect } from '@react-navigation/native';
-import { useBottomTabBarHeight } from '@react-navigation/bottom-tabs';
+  return (
+    <Animated.View
+      entering={FadeInDown.duration(250).delay(index * 50)}
+      exiting={FadeOutUp.duration(150)}
+      layout={Layout.duration(300)}
+      style={{ flex: 1 }}
+    >
+      <TouchableOpacity
+        activeOpacity={0.92}
+        style={[
+          styles(theme, accent).noteCard,
+          multiSelect && isSelected ? noteCardSelectedStyle : null,
+        ]}
+        delayLongPress={300}
+        onLongPress={() => onLongPress(item)}
+        onPress={() => {
+          if (isEditing) return;
+          if (multiSelect) {
+            onToggleSelect(item.id);
+            return;
+          }
+          navigation.navigate('NoteDetail', { noteId: item.id });
+        }}
+      >
+      {multiSelect ? (
+        <View style={styles(theme, accent).selectBadge}>
+          {isSelected ? (
+            <View style={[styles(theme, accent).selectBadgeInner, { backgroundColor: theme.colors.primary }]}>
+              <MaterialCommunityIcons name="check" size={14} color={theme.colors.background} />
+            </View>
+          ) : (
+            <View style={[styles(theme, accent).selectBadgeInner, { backgroundColor: 'transparent' }]} />
+          )}
+        </View>
+      ) : null}
+      {isEditing ? (
+        <>
+          <TextInput
+            style={styles(theme, accent).noteTitleInput}
+            value={editingTitle}
+            onChangeText={onChangeTitle}
+            placeholder="Baslik"
+            placeholderTextColor={theme.colors.muted}
+          />
+          <TextInput
+            style={[styles(theme, accent).noteContentInput, styles(theme, accent).noteContentInputMultiline]}
+            value={editingContent}
+            onChangeText={onChangeContent}
+            placeholder="Icerik"
+            placeholderTextColor={theme.colors.muted}
+            multiline
+            textAlignVertical="top"
+          />
+          <View style={styles(theme, accent).noteActions}>
+            <TouchableOpacity style={[styles(theme, accent).actionButton, styles(theme, accent).saveButton]} onPress={onSave}>
+              <Text style={styles(theme, accent).actionText}>Kaydet</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles(theme, accent).actionButton, styles(theme, accent).cancelButton]} onPress={onCancel}>
+              <Text style={styles(theme, accent).actionText}>Vazgec</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : (
+        <>
+          <View style={styles(theme, accent).noteHeaderRow}>
+            <Text style={styles(theme, accent).noteTitle} numberOfLines={1} ellipsizeMode="tail">{(item.title || '').trim() || 'Başlıksız'}</Text>
+            {!multiSelect ? (
+              <TouchableOpacity
+                style={styles(theme, accent).overflowBtn}
+                onPress={() => onStartEditing(item)}
+              >
+                <MaterialCommunityIcons name="dots-vertical" size={16} color={theme.colors.text} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {(item.content || '').trim() ? (
+            <Text
+              style={styles(theme, accent).noteContent}
+              numberOfLines={grid ? 2 : undefined}
+              ellipsizeMode="tail"
+            >
+              {(item.content || '').trim()}
+            </Text>
+          ) : null}
+          <Text style={styles(theme, accent).noteDate}>{new Date(item.created_at).toLocaleString()}</Text>
+        </>
+      )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+});
 
-const NotesScreen = ({ navigation, route }) => {
+// Helper for dynamic styles in extracted component
+const styles = (theme, accent) => StyleSheet.create({
+  noteCard: {
+    backgroundColor: accent && theme.colors.surfaceTinted
+      ? theme.colors.surfaceTinted
+      : theme.colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: accent && theme.colors.borderTinted
+      ? theme.colors.borderTinted
+      : theme.colors.border,
+    padding: 16,
+    gap: 10,
+    minHeight: 120,
+    flex: 1,
+  },
+  selectBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 10,
+  },
+  selectBadgeInner: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: accent && theme.colors.borderTinted
+      ? theme.colors.borderTinted
+      : theme.colors.border,
+  },
+  noteTitleInput: {
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: accent && theme.colors.borderTinted
+      ? theme.colors.borderTinted
+      : theme.colors.border,
+    backgroundColor: accent && theme.colors.surfaceElevatedTinted
+      ? theme.colors.surfaceElevatedTinted
+      : theme.colors.surfaceElevated,
+    color: theme.colors.text,
+    paddingHorizontal: 12,
+    fontSize: 16,
+  },
+  noteContentInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: accent && theme.colors.borderTinted
+      ? theme.colors.borderTinted
+      : theme.colors.border,
+    backgroundColor: accent && theme.colors.surfaceElevatedTinted
+      ? theme.colors.surfaceElevatedTinted
+      : theme.colors.surfaceElevated,
+    color: theme.colors.text,
+    paddingHorizontal: 12,
+    fontSize: 15,
+  },
+  noteContentInputMultiline: {
+    height: 120,
+    paddingTop: 10,
+    textAlignVertical: 'top',
+  },
+  noteActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  actionButton: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saveButton: {
+    backgroundColor: theme.colors.primary,
+  },
+  cancelButton: {
+    backgroundColor: accent && theme.colors.surfaceElevatedTinted
+      ? theme.colors.surfaceElevatedTinted
+      : theme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: accent && theme.colors.borderTinted
+      ? theme.colors.borderTinted
+      : theme.colors.border,
+  },
+  actionText: {
+    color: theme.colors.background,
+    fontWeight: '600',
+  },
+  noteHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+  },
+  noteTitle: {
+    color: theme.colors.text,
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  overflowBtn: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: accent && theme.colors.surfaceElevatedTinted
+      ? theme.colors.surfaceElevatedTinted
+      : theme.colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: accent && theme.colors.borderTinted
+      ? theme.colors.borderTinted
+      : theme.colors.border,
+  },
+  noteContent: {
+    color: theme.colors.textSecondary,
+  },
+  noteDate: {
+    color: theme.colors.muted,
+    fontSize: 12,
+  },
+});
+
+const NotesScreen = ({ navigation, route, embedded = false }) => {
   const { theme, accent } = useAppTheme();
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight ? useBottomTabBarHeight() : 0;
-  const opacity = useSharedValue(0);
 
-  useFocusEffect(
-    useCallback(() => {
-      opacity.value = withTiming(1, { duration: 500 });
-      return () => {
-        opacity.value = withTiming(0, { duration: 250 });
-      };
-    }, [])
-  );
-
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      opacity: opacity.value,
-    };
-  });
-  const styles = useMemo(
+  const screenStyles = useMemo(
     () =>
       StyleSheet.create({
         container: {
@@ -114,16 +317,6 @@ const NotesScreen = ({ navigation, route }) => {
           alignItems: 'center',
           justifyContent: 'center',
         },
-        filterContainer: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-        },
-        filterLabel: {
-          fontSize: 14,
-          fontWeight: '600',
-          color: theme.colors.textSecondary,
-        },
         multiSelectToolbar: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -138,7 +331,6 @@ const NotesScreen = ({ navigation, route }) => {
           flexDirection: 'row',
           gap: 8,
         },
-        toolbar: { flexDirection: 'row', alignItems: 'center', gap: 8 },
         searchInput: {
           flex: 1,
           height: 48,
@@ -232,24 +424,11 @@ const NotesScreen = ({ navigation, route }) => {
           color: theme.colors.text,
           fontWeight: '600',
         },
-        selectBadge: {
-          position: 'absolute',
-          top: 12,
-          right: 12,
-          zIndex: 10,
-        },
-        selectBadgeInner: {
-          width: 24,
-          height: 24,
-          borderRadius: 12,
+        addTile: {
           alignItems: 'center',
           justifyContent: 'center',
-          borderWidth: 2,
-          borderColor: accent && theme.colors.borderTinted
-            ? theme.colors.borderTinted
-            : theme.colors.border,
-        },
-        noteCard: {
+          minHeight: 120,
+          borderStyle: 'dashed',
           backgroundColor: accent && theme.colors.surfaceTinted
             ? theme.colors.surfaceTinted
             : theme.colors.surface,
@@ -260,127 +439,13 @@ const NotesScreen = ({ navigation, route }) => {
             : theme.colors.border,
           padding: 16,
           gap: 10,
-          minHeight: 120,
           flex: 1,
-        },
-        noteTitle: {
-          color: theme.colors.text,
-          fontWeight: '700',
-          fontSize: 16,
-        },
-        noteHeaderRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 6,
-        },
-        overflowBtn: {
-          padding: 6,
-          borderRadius: 8,
-          backgroundColor: accent && theme.colors.surfaceElevatedTinted
-            ? theme.colors.surfaceElevatedTinted
-            : theme.colors.surfaceElevated,
-          borderWidth: 1,
-          borderColor: accent && theme.colors.borderTinted
-            ? theme.colors.borderTinted
-            : theme.colors.border,
-        },
-        noteContent: {
-          color: theme.colors.textSecondary,
-        },
-        noteDate: {
-          color: theme.colors.muted,
-          fontSize: 12,
-        },
-        addTile: {
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: 120,
-          borderStyle: 'dashed',
         },
         addTileText: {
           color: theme.colors.muted,
           marginTop: 8,
           fontWeight: '700',
         },
-        noteActions: {
-          flexDirection: 'row',
-          gap: 12,
-        },
-        actionButton: {
-          flex: 1,
-          borderRadius: 10,
-          paddingVertical: 12,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        editButton: {
-          backgroundColor: theme.colors.primary,
-        },
-        deleteButton: {
-          backgroundColor: theme.colors.danger,
-        },
-        actionText: {
-          color: theme.colors.background,
-          fontWeight: '600',
-        },
-        saveButton: {
-          backgroundColor: theme.colors.primary,
-        },
-        cancelButton: {
-          backgroundColor: accent && theme.colors.surfaceElevatedTinted
-            ? theme.colors.surfaceElevatedTinted
-            : theme.colors.surfaceElevated,
-          borderWidth: 1,
-          borderColor: accent && theme.colors.borderTinted
-            ? theme.colors.borderTinted
-            : theme.colors.border,
-        },
-        noteTitleInput: {
-          height: 44,
-          borderRadius: 10,
-          borderWidth: 1,
-          borderColor: accent && theme.colors.borderTinted
-            ? theme.colors.borderTinted
-            : theme.colors.border,
-          backgroundColor: accent && theme.colors.surfaceElevatedTinted
-            ? theme.colors.surfaceElevatedTinted
-            : theme.colors.surfaceElevated,
-          color: theme.colors.text,
-          paddingHorizontal: 12,
-          fontSize: 16,
-        },
-        noteContentInput: {
-          borderRadius: 10,
-          borderWidth: 1,
-          borderColor: accent && theme.colors.borderTinted
-            ? theme.colors.borderTinted
-            : theme.colors.border,
-          backgroundColor: accent && theme.colors.surfaceElevatedTinted
-            ? theme.colors.surfaceElevatedTinted
-            : theme.colors.surfaceElevated,
-          color: theme.colors.text,
-          paddingHorizontal: 12,
-          fontSize: 15,
-        },
-        noteContentInputMultiline: {
-          height: 120,
-          paddingTop: 10,
-          textAlignVertical: 'top',
-        },
-        fab: {
-          position: 'absolute',
-          right: 20,
-          bottom: 24,
-          height: 56,
-          width: 56,
-          borderRadius: 28,
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: theme.colors.primary,
-          elevation: 2,
-        },
-        fabText: { color: theme.colors.background, fontSize: 24, marginTop: -2 },
         modalOverlay: {
           flex: 1,
           backgroundColor: 'rgba(0,0,0,0.4)',
@@ -439,8 +504,8 @@ const NotesScreen = ({ navigation, route }) => {
     setEditingContent('');
   };
 
-  const fetchNotes = useCallback(async () => {
-    setLoading(true);
+  const fetchNotes = useCallback(async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     setError('');
 
     try {
@@ -483,11 +548,14 @@ const NotesScreen = ({ navigation, route }) => {
 
   useFocusEffect(
     useCallback(() => {
-      fetchNotes();
-    }, [fetchNotes])
+      // Eğer notlar zaten yüklüyse, arka planda yenile (loading gösterme)
+      const shouldLoadBackground = notes.length > 0;
+      fetchNotes(shouldLoadBackground);
+    }, [fetchNotes, notes.length])
   );
 
-  // Load pinned notes
+  // ... (rest of the logic: Load pinned notes, supabase channel, handlers) ...
+  // Keeping the previous logic hooks...
   useEffect(() => {
     (async () => {
       try {
@@ -658,15 +726,9 @@ const NotesScreen = ({ navigation, route }) => {
   };
 
   const statusMessage = useMemo(() => {
-    if (saving) {
-      return 'Kaydediliyor...';
-    }
-    if (updating) {
-      return 'Guncelleniyor...';
-    }
-    if (deletingId) {
-      return 'Siliniyor...';
-    }
+    if (saving) return 'Kaydediliyor...';
+    if (updating) return 'Guncelleniyor...';
+    if (deletingId) return 'Siliniyor...';
     return '';
   }, [saving, updating, deletingId]);
 
@@ -681,27 +743,25 @@ const NotesScreen = ({ navigation, route }) => {
     const mod = (n) => new Date(n.updated_at || n.created_at || 0).getTime();
     const t = (n) => (n.title || '').toLowerCase();
     const sorted = [...arr].sort((a, b) => {
-      switch (sortBy) {
-        case 'modified-asc':
-          return mod(a) - mod(b);
-        case 'title-asc':
-          return t(a).localeCompare(t(b));
-        case 'title-desc':
-          return t(b).localeCompare(t(a));
-        case 'modified-desc':
-        default:
-          return mod(b) - mod(a);
-      }
-    });
-    // Pin first
-    const withPin = sorted.sort((a, b) => {
       const ap = pinnedIds.includes(a.id) ? 1 : 0;
       const bp = pinnedIds.includes(b.id) ? 1 : 0;
       if (ap !== bp) return bp - ap;
-      return 0;
+      switch (sortBy) {
+        case 'modified-asc': return mod(a) - mod(b);
+        case 'title-asc': return t(a).localeCompare(t(b));
+        case 'title-desc': return t(b).localeCompare(t(a));
+        case 'modified-desc': default: return mod(b) - mod(a);
+      }
     });
-    return withPin;
+    return sorted;
   }, [notes, query, sortBy, pinnedIds]);
+
+  const noteCardSelectedStyle = useMemo(() => ({
+    borderColor: theme.colors.primary,
+    backgroundColor: accent && theme.colors.surfaceElevatedTinted
+      ? theme.colors.surfaceElevatedTinted
+      : theme.colors.surfaceElevated
+  }), [theme, accent]);
 
   const handleCreateEmptyNote = useCallback(async () => {
     if (!userId) {
@@ -724,8 +784,6 @@ const NotesScreen = ({ navigation, route }) => {
     }
   }, [navigation, userId]);
 
-  const listData = useMemo(() => [{ __type: 'add' }, ...filteredNotes], [filteredNotes]);
-  // Hide add tile when in multi-select mode
   const effectiveListData = useMemo(
     () => (multiSelect ? filteredNotes : [{ __type: 'add' }, ...filteredNotes]),
     [filteredNotes, multiSelect],
@@ -784,20 +842,20 @@ const NotesScreen = ({ navigation, route }) => {
   const renderEmptyList = () => {
     if (loading) {
       return (
-        <View style={styles.emptyState}>
+        <View style={screenStyles.emptyState}>
           <ActivityIndicator color={theme.colors.primary} />
-          <Text style={styles.emptyText}>Notlar yukleniyor...</Text>
+          <Text style={screenStyles.emptyText}>Notlar yukleniyor...</Text>
         </View>
       );
     }
 
     if (error) {
       return (
-        <View style={styles.emptyState}>
+        <View style={screenStyles.emptyState}>
           <MaterialCommunityIcons name="alert-circle-outline" size={26} color={theme.colors.primary} accessibilityLabel="Hata simgesi" />
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={fetchNotes} style={styles.retryButton}>
-            <Text style={styles.retryText}>Tekrar dene</Text>
+          <Text style={screenStyles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={() => fetchNotes(false)} style={screenStyles.retryButton}>
+            <Text style={screenStyles.retryText}>Tekrar dene</Text>
           </TouchableOpacity>
         </View>
       );
@@ -805,9 +863,9 @@ const NotesScreen = ({ navigation, route }) => {
 
     if (!notes.length) {
       return (
-        <View style={styles.emptyState}>
+        <View style={screenStyles.emptyState}>
           <MaterialCommunityIcons name="note-outline" size={28} color={theme.colors.primary} accessibilityLabel="Boş notlar simgesi" />
-          <Text style={styles.emptyText}>Henuz not eklenmemis.</Text>
+          <Text style={screenStyles.emptyText}>Henuz not eklenmemis.</Text>
         </View>
       );
     }
@@ -815,193 +873,152 @@ const NotesScreen = ({ navigation, route }) => {
     return null;
   };
 
-  const renderNoteItem = ({ item, index }) => {
-    const isEditing = editingId === item.id;
-    const isSelected = selectedIds.includes(item.id);
+  const handleLongPressNote = useCallback((item) => {
+    if (editingId === item.id) return;
+    if (!multiSelect) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setMultiSelect(true);
+      setSelectedIds((prev) => (prev.includes(item.id) ? prev : [item.id, ...prev]));
+    } else {
+      toggleSelect(item.id);
+    }
+  }, [editingId, multiSelect, toggleSelect]);
 
-    return (
-      <Animated.View
-        entering={FadeInDown.duration(250).delay(index * 50)}
-        exiting={FadeOutUp.duration(150)}
-        layout={Layout.duration(300)}
-        style={{ flex: 1 }}
-      >
-        <TouchableOpacity
-          activeOpacity={0.92}
-          style={[
-            styles.noteCard,
-            multiSelect && isSelected ? {
-              borderColor: theme.colors.primary,
-              backgroundColor: accent && theme.colors.surfaceElevatedTinted
-                ? theme.colors.surfaceElevatedTinted
-                : theme.colors.surfaceElevated
-            } : null,
-          ]}
-          delayLongPress={300}
-          onLongPress={() => {
-            if (isEditing) return;
-            if (!multiSelect) {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setMultiSelect(true);
-              setSelectedIds((prev) => (prev.includes(item.id) ? prev : [item.id, ...prev]));
-            } else {
-              toggleSelect(item.id);
-            }
-          }}
-          onPress={() => {
-            if (isEditing) return;
-            if (multiSelect) {
-              toggleSelect(item.id);
-              return;
-            }
-            navigation.navigate('NoteDetail', { noteId: item.id });
-          }}
+  const handlePressNote = useCallback((item) => {
+    if (editingId === item.id) return;
+    if (multiSelect) {
+      toggleSelect(item.id);
+      return;
+    }
+    navigation.navigate('NoteDetail', { noteId: item.id });
+  }, [editingId, multiSelect, toggleSelect, navigation]);
+
+  const handleStartEditingNote = useCallback((item) => {
+    Haptics.selectionAsync();
+    setSelectedNote(item);
+    setShowQuick(true);
+  }, []);
+
+  const renderNoteItem = useCallback(({ item, index }) => {
+    if (item.__type === 'add') {
+      return (
+        <Animated.View
+          entering={FadeInDown.duration(250).delay(100)}
+          exiting={FadeOutUp.duration(150)}
+          layout={Layout.duration(300)}
+          style={{ flex: 1 }}
         >
-        {multiSelect ? (
-          <View style={styles.selectBadge}>
-            {isSelected ? (
-              <View style={[styles.selectBadgeInner, { backgroundColor: theme.colors.primary }]}>
-                <MaterialCommunityIcons name="check" size={14} color={theme.colors.background} />
-              </View>
-            ) : (
-              <View style={[styles.selectBadgeInner, { backgroundColor: 'transparent' }]} />
-            )}
-          </View>
-        ) : null}
-        {isEditing ? (
-          <>
-            <TextInput
-              style={styles.noteTitleInput}
-              value={editingTitle}
-              onChangeText={setEditingTitle}
-              placeholder="Baslik"
-              placeholderTextColor={theme.colors.muted}
-            />
-            <TextInput
-              style={[styles.noteContentInput, styles.noteContentInputMultiline]}
-              value={editingContent}
-              onChangeText={setEditingContent}
-              placeholder="Icerik"
-              placeholderTextColor={theme.colors.muted}
-              multiline
-              textAlignVertical="top"
-            />
-            <View style={styles.noteActions}>
-              <TouchableOpacity style={[styles.actionButton, styles.saveButton]} onPress={handleUpdateNote}>
-                <Text style={styles.actionText}>Kaydet</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={resetEditing}>
-                <Text style={styles.actionText}>Vazgec</Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        ) : (
-          <>
-            <View style={styles.noteHeaderRow}>
-              <Text style={styles.noteTitle} numberOfLines={1} ellipsizeMode="tail">{(item.title || '').trim() || 'Başlıksız'}</Text>
-              {!multiSelect ? (
-                <TouchableOpacity
-                  style={styles.overflowBtn}
-                  onPress={() => {
-                    Haptics.selectionAsync();
-                    setSelectedNote(item);
-                    setShowQuick(true);
-                  }}
-                >
-                  <MaterialCommunityIcons name="dots-vertical" size={16} color={theme.colors.text} />
-                </TouchableOpacity>
-              ) : null}
-            </View>
-            {(item.content || '').trim() ? (
-              <Text
-                style={styles.noteContent}
-                numberOfLines={grid ? 2 : undefined}
-                ellipsizeMode="tail"
-              >
-                {(item.content || '').trim()}
-              </Text>
-            ) : null}
-            <Text style={styles.noteDate}>{new Date(item.created_at).toLocaleString()}</Text>
-          </>
-        )}
-        </TouchableOpacity>
-      </Animated.View>
+          <TouchableOpacity
+            activeOpacity={0.9}
+            style={screenStyles.addTile}
+            onPress={handleCreateEmptyNote}
+          >
+            <MaterialCommunityIcons name="plus" size={22} color={theme.colors.muted} />
+            <Text style={screenStyles.addTileText}>Yeni sayfa</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      );
+    }
+    return (
+      <NoteItem
+        item={item}
+        index={index}
+        editingId={editingId}
+        editingTitle={editingTitle}
+        editingContent={editingContent}
+        selectedIds={selectedIds}
+        multiSelect={multiSelect}
+        grid={grid}
+        theme={theme}
+        accent={accent}
+        onStartEditing={handleStartEditingNote}
+        onToggleSelect={toggleSelect}
+        onLongPress={handleLongPressNote}
+        onSave={handleUpdateNote}
+        onCancel={resetEditing}
+        onChangeTitle={setEditingTitle}
+        onChangeContent={setEditingContent}
+        navigation={navigation}
+        noteCardSelectedStyle={noteCardSelectedStyle}
+      />
     );
-  };
+  }, [editingId, editingTitle, editingContent, selectedIds, multiSelect, grid, theme, accent, handleStartEditingNote, toggleSelect, handleLongPressNote, handleUpdateNote, resetEditing, setEditingTitle, setEditingContent, navigation, noteCardSelectedStyle, screenStyles, handleCreateEmptyNote]);
 
   return (
-    <Animated.View style={[styles.container, animatedStyle]}>
+    <View style={screenStyles.container}>
       <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
 
-      {/* Custom Header */}
-      <View style={styles.customHeader}>
-        <View style={styles.keeperTitle}>
-          <View style={styles.keeperIcon}>
-            <MaterialCommunityIcons name="note-text" size={22} color={theme.colors.primary} />
+      {/* Custom Header - sadece embedded değilse göster */}
+      {!embedded && (
+        <View style={screenStyles.customHeader}>
+          <View style={screenStyles.keeperTitle}>
+            <View style={screenStyles.keeperIcon}>
+              <MaterialCommunityIcons name="note-text" size={22} color={theme.colors.primary} />
+            </View>
+            <Text style={screenStyles.keeperText}>Keeper</Text>
           </View>
-          <Text style={styles.keeperText}>Keeper</Text>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Profile')}
+            style={screenStyles.profileButton}
+            activeOpacity={0.7}
+          >
+            <Avatar
+              name={session?.user?.user_metadata?.full_name || session?.user?.email}
+              imageUrl={session?.user?.user_metadata?.avatar_url}
+              size={40}
+            />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('Profile')}
-          style={styles.profileButton}
-          activeOpacity={0.7}
-        >
-          <Avatar
-            name={session?.user?.user_metadata?.full_name || session?.user?.email}
-            imageUrl={session?.user?.user_metadata?.avatar_url}
-            size={40}
-          />
-        </TouchableOpacity>
-      </View>
+      )}
 
       {/* Modern Toolbar */}
-      <View style={[styles.header, styles.contentPad]}>
+      <View style={[screenStyles.header, screenStyles.contentPad]}>
         {!multiSelect ? (
           <>
-            <View style={styles.searchRow}>
+            <View style={screenStyles.searchRow}>
               <TextInput
-                style={styles.searchInput}
+                style={screenStyles.searchInput}
                 value={query}
                 onChangeText={setQuery}
                 placeholder="Notlarda ara..."
                 placeholderTextColor={theme.colors.muted}
               />
-              <TouchableOpacity style={styles.iconButton} onPress={() => setGrid((g) => !g)}>
+              <TouchableOpacity style={screenStyles.iconButton} onPress={() => setGrid((g) => !g)}>
                 <MaterialCommunityIcons 
                   name={grid ? 'view-list' : 'view-grid'} 
                   size={22} 
                   color={theme.colors.text} 
                 />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton} onPress={() => setShowSort(true)}>
+              <TouchableOpacity style={screenStyles.iconButton} onPress={() => setShowSort(true)}>
                 <MaterialCommunityIcons name="sort" size={22} color={theme.colors.text} />
               </TouchableOpacity>
             </View>
           </>
         ) : (
-          <View style={styles.multiSelectToolbar}>            
-            <Text style={styles.multiSelectText}>{selectedIds.length} seçili</Text>
-            <View style={styles.multiSelectActions}>
-              <TouchableOpacity style={styles.pillButton} onPress={handleSelectAllOrClear}>
-                <Text style={styles.pillText}>{selectAllLabel}</Text>
+          <View style={screenStyles.multiSelectToolbar}>            
+            <Text style={screenStyles.multiSelectText}>{selectedIds.length} seçili</Text>
+            <View style={screenStyles.multiSelectActions}>
+              <TouchableOpacity style={screenStyles.pillButton} onPress={handleSelectAllOrClear}>
+                <Text style={screenStyles.pillText}>{selectAllLabel}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.pillButton, { borderColor: theme.colors.danger }]}
+                style={[screenStyles.pillButton, { borderColor: theme.colors.danger }]}
                 onPress={handleBulkDelete}
                 disabled={bulkDeleting || selectedIds.length === 0}
               >
-                <Text style={[styles.pillText, { color: theme.colors.danger }]}>
+                <Text style={[screenStyles.pillText, { color: theme.colors.danger }]}>
                   {bulkDeleting ? 'Siliniyor...' : 'Sil'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.pillButton}
+                style={screenStyles.pillButton}
                 onPress={() => {
                   setMultiSelect(false);
                   setSelectedIds([]);
                 }}
               >
-                <Text style={styles.pillText}>İptal</Text>
+                <Text style={screenStyles.pillText}>İptal</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1014,55 +1031,34 @@ const NotesScreen = ({ navigation, route }) => {
         numColumns={grid ? 2 : 1}
         columnWrapperStyle={grid ? { gap: 12 } : undefined}
         keyExtractor={(item) => (item.__type === 'add' ? 'add-tile' : item.id)}
-        renderItem={({ item }) => {
-          if (item.__type === 'add') {
-            return (
-              <Animated.View
-                entering={FadeInDown.duration(250).delay(100)}
-                exiting={FadeOutUp.duration(150)}
-                layout={Layout.duration(300)}
-                style={{ flex: 1 }}
-              >
-                <TouchableOpacity
-                  activeOpacity={0.9}
-                  style={[styles.noteCard, styles.addTile]}
-                  onPress={handleCreateEmptyNote}
-                >
-                  <MaterialCommunityIcons name="plus" size={22} color={theme.colors.muted} />
-                  <Text style={styles.addTileText}>Yeni sayfa</Text>
-                </TouchableOpacity>
-              </Animated.View>
-            );
-          }
-          return renderNoteItem({ item });
-        }}
+        renderItem={renderNoteItem}
         contentContainerStyle={[
-          styles.listContent,
+          screenStyles.listContent,
           { paddingBottom: Math.max(96, (tabBarHeight || 0) + (insets.bottom || 0) + 72) },
         ]}
         ListEmptyComponent={renderEmptyList}
         showsVerticalScrollIndicator={false}
-        removeClippedSubviews={false}
-        initialNumToRender={10}
-        maxToRenderPerBatch={10}
-        windowSize={10}
+        removeClippedSubviews={true} // Optimized
+        initialNumToRender={10} // Optimized
+        maxToRenderPerBatch={10} // Optimized
+        windowSize={10} // Optimized
       />
 
       {/* FAB kaldırıldı; not detayı ekranı ile tek alan düzenine geçildi */}
 
   <Modal visible={showAdd} transparent animationType="fade" onRequestClose={() => setShowAdd(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowAdd(false)}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>Yeni Not</Text>
+        <TouchableOpacity style={screenStyles.modalOverlay} activeOpacity={1} onPress={() => setShowAdd(false)}>
+          <View style={screenStyles.modalSheet}>
+            <Text style={screenStyles.modalTitle}>Yeni Not</Text>
             <TextInput
-              style={styles.input}
+              style={screenStyles.input}
               value={title}
               onChangeText={setTitle}
               placeholder="Not başlığı"
               placeholderTextColor={theme.colors.muted}
             />
             <TextInput
-              style={[styles.input, styles.textarea]}
+              style={[screenStyles.input, screenStyles.textarea]}
               value={content}
               onChangeText={setContent}
               placeholder="Not içeriği"
@@ -1070,45 +1066,45 @@ const NotesScreen = ({ navigation, route }) => {
               multiline
               textAlignVertical="top"
             />
-            <View style={styles.row}>
+            <View style={screenStyles.row}>
               <TouchableOpacity
-                style={[styles.primaryButton, { flex: 1 }]}
+                style={[screenStyles.primaryButton, { flex: 1 }]}
                 onPress={async () => {
                   await handleAddNote();
                   if (!saving && !error) setShowAdd(false);
                 }}
               >
-                <Text style={styles.primaryButtonText}>{saving ? 'Kaydediliyor...' : 'Kaydet'}</Text>
+                <Text style={screenStyles.primaryButtonText}>{saving ? 'Kaydediliyor...' : 'Kaydet'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.pillButton, { flex: 1 }]}
+                style={[screenStyles.pillButton, { flex: 1 }]}
                 onPress={() => setShowAdd(false)}
               >
-                <Text style={styles.pillText}>Vazgeç</Text>
+                <Text style={screenStyles.pillText}>Vazgeç</Text>
               </TouchableOpacity>
             </View>
-            {statusMessage ? <Text style={styles.statusText}>{statusMessage}</Text> : null}
-            {error && !loading ? <Text style={styles.errorText}>{error}</Text> : null}
+            {statusMessage ? <Text style={screenStyles.statusText}>{statusMessage}</Text> : null}
+            {error && !loading ? <Text style={screenStyles.errorText}>{error}</Text> : null}
           </View>
         </TouchableOpacity>
       </Modal>
 
   {/* Quick actions modal */}
       <Modal visible={showQuick} transparent animationType="fade" onRequestClose={() => setShowQuick(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowQuick(false)}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>Hızlı işlemler</Text>
+        <TouchableOpacity style={screenStyles.modalOverlay} activeOpacity={1} onPress={() => setShowQuick(false)}>
+          <View style={screenStyles.modalSheet}>
+            <Text style={screenStyles.modalTitle}>Hızlı işlemler</Text>
             <TouchableOpacity
-              style={[styles.pillButton, { alignItems: 'flex-start' }]}
+              style={[screenStyles.pillButton, { alignItems: 'flex-start' }]}
               onPress={() => {
                 setShowQuick(false);
                 if (selectedNote) handleStartEditing(selectedNote);
               }}
             >
-              <Text style={styles.pillText}>Düzenle</Text>
+              <Text style={screenStyles.pillText}>Düzenle</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.pillButton, { alignItems: 'flex-start' }]}
+              style={[screenStyles.pillButton, { alignItems: 'flex-start' }]}
               onPress={async () => {
                 if (!selectedNote) return;
                 try {
@@ -1123,21 +1119,21 @@ const NotesScreen = ({ navigation, route }) => {
                 setShowQuick(false);
               }}
             >
-              <Text style={styles.pillText}>
+              <Text style={screenStyles.pillText}>
                 {selectedNote && pinnedIds.includes(selectedNote.id) ? 'Sabitlemeyi kaldır' : 'Sabitle'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.pillButton, { alignItems: 'flex-start', borderColor: theme.colors.danger }]}
+              style={[screenStyles.pillButton, { alignItems: 'flex-start', borderColor: theme.colors.danger }]}
               onPress={() => {
                 setShowQuick(false);
                 if (selectedNote) handleDeleteNote(selectedNote.id);
               }}
             >
-              <Text style={[styles.pillText, { color: theme.colors.danger }]}>Sil</Text>
+              <Text style={[screenStyles.pillText, { color: theme.colors.danger }]}>Sil</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.pillButton]} onPress={() => setShowQuick(false)}>
-              <Text style={styles.pillText}>İptal</Text>
+            <TouchableOpacity style={[screenStyles.pillButton]} onPress={() => setShowQuick(false)}>
+              <Text style={screenStyles.pillText}>İptal</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
@@ -1145,9 +1141,9 @@ const NotesScreen = ({ navigation, route }) => {
 
       {/* Sort modal */}
       <Modal visible={showSort} transparent animationType="fade" onRequestClose={() => setShowSort(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowSort(false)}>
-          <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>Sırala</Text>
+        <TouchableOpacity style={screenStyles.modalOverlay} activeOpacity={1} onPress={() => setShowSort(false)}>
+          <View style={screenStyles.modalSheet}>
+            <Text style={screenStyles.modalTitle}>Sırala</Text>
             {[
               { key: 'modified-desc', label: 'Değiştirildiği tarih (↓)' },
               { key: 'modified-asc', label: 'Değiştirildiği tarih (↑)' },
@@ -1156,13 +1152,13 @@ const NotesScreen = ({ navigation, route }) => {
             ].map((opt) => (
               <TouchableOpacity
                 key={opt.key}
-                style={[styles.pillButton, { alignItems: 'flex-start' }]}
+                style={[screenStyles.pillButton, { alignItems: 'flex-start' }]}
                 onPress={() => {
                   setSortBy(opt.key);
                   setShowSort(false);
                 }}
               >
-                <Text style={styles.pillText}>
+                <Text style={screenStyles.pillText}>
                   {opt.label} {sortBy === opt.key ? '•' : ''}
                 </Text>
               </TouchableOpacity>
@@ -1170,7 +1166,7 @@ const NotesScreen = ({ navigation, route }) => {
           </View>
         </TouchableOpacity>
       </Modal>
-    </Animated.View>
+    </View>
   );
 };
 

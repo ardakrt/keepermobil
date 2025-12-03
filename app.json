@@ -1,6 +1,6 @@
 {
   "expo": {
-    "scheme": "com.ardakaratas.test",
+    "scheme": "com.keeperapp.test",
     "name": "Keeper",
     "slug": "test",
     "version": "1.0.0",
@@ -22,7 +22,7 @@
         "backgroundColor": "#f1f1f2"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.ardakaratas.test",
+      "package": "com.keeperapp.test",
       "googleServicesFile": "./google-services.json",
       "intentFilters": [
         {
@@ -50,7 +50,7 @@
       },
       "resetRedirectBase": "https://ardakaratas.com.tr"
     },
-    "plugins": [
+   "plugins": [
       [
         "expo-notifications",
         {
@@ -70,9 +70,11 @@
         }
       ],
       "@react-native-firebase/messaging",
+      "@react-native-google-signin/google-signin",
       "expo-secure-store",
-      "./plugins/withAndroidManifestFix.js"
+      "./plugins/withAndroidManifestFix.js",
+      "expo-web-browser"
     ],
-    "owner": "ardkaratas"
+    "owner": "keeperapp"
   }
 }

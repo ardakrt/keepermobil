@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keeper - Yönlendiriliyor...</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 24px;
+            padding: 48px 32px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            text-align: center;
+        }
+
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 800;
+            color: #1a202c;
+            margin-bottom: 12px;
+        }
+
+        p {
+            font-size: 16px;
+            color: #718096;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 24px;
+            border: 4px solid #e2e8f0;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .button {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 32px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 700;
+            font-size: 16px;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+        }
+
+        .button:active {
+            transform: translateY(0);
+        }
+
+        .info {
+            background: #edf2f7;
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 24px;
+            font-size: 14px;
+            color: #4a5568;
+        }
+
+        .error {
+            background: #fed7d7;
+            color: #c53030;
+        }
+
+        .success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        code {
+            background: #2d3748;
+            color: #f7fafc;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🔐</div>
+        <h1 id="title">Uygulama Açılıyor...</h1>
+        <p id="message">Keeper uygulamanıza yönlendiriliyorsunuz.</p>
+
+        <div class="spinner" id="spinner"></div>
+
+        <div id="manual-section" style="display: none;">
+            <a href="#" id="open-app-btn" class="button">Uygulamayı Aç</a>
+            <div class="info" style="margin-top: 24px;">
+                <strong>Uygulama açılmadı mı?</strong><br>
+                Butona tıklayarak manuel olarak açabilirsiniz.
+            </div>
+        </div>
+
+        <div class="info" id="info-box" style="display: none;"></div>
+    </div>
+
+    <script>
+        // URL'den hash parametrelerini al
+        const hash = window.location.hash.substring(1);
+        const params = new URLSearchParams(hash);
+
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        const type = params.get('type');
+        const error = params.get('error');
+        const errorDescription = params.get('error_description');
+
+        // Email change confirmation için özel parametre
+        const emailChangeToken = params.get('token');
+        const emailChangeType = params.get('type');
+
+        const spinner = document.getElementById('spinner');
+        const title = document.getElementById('title');
+        const message = document.getElementById('message');
+        const manualSection = document.getElementById('manual-section');
+        const openAppBtn = document.getElementById('open-app-btn');
+        const infoBox = document.getElementById('info-box');
+
+        // Deep link URL'ini oluştur
+        function buildDeepLink() {
+            const deepLinkBase = 'kisiselnot://auth';
+
+            if (error) {
+                return `${deepLinkBase}?error=${encodeURIComponent(error)}&error_description=${encodeURIComponent(errorDescription || '')}`;
+            }
+
+            const deepLinkParams = new URLSearchParams();
+            if (accessToken) deepLinkParams.set('access_token', accessToken);
+            if (refreshToken) deepLinkParams.set('refresh_token', refreshToken);
+            if (type) deepLinkParams.set('type', type);
+            if (emailChangeToken) deepLinkParams.set('token', emailChangeToken);
+
+            return `${deepLinkBase}?${deepLinkParams.toString()}`;
+        }
+
+        const deepLink = buildDeepLink();
+
+        // Uygulamayı aç
+        function openApp() {
+            window.location.href = deepLink;
+        }
+
+        // Hata kontrolü
+        if (error) {
+            // Hata olsa bile uygulamayı aç (uygulama içinde hata gösterilebilir)
+            openApp();
+
+            spinner.style.display = 'none';
+            title.textContent = 'Hata Oluştu';
+            message.textContent = errorDescription || 'Bir hata oluştu. Uygulama açılıyor...';
+            infoBox.className = 'info error';
+            infoBox.style.display = 'block';
+            infoBox.innerHTML = `<strong>Hata:</strong> ${error}<br>${errorDescription || ''}<br><br>Uygulama otomatik olarak açılıyor...`;
+
+            // Manuel açma butonu göster
+            setTimeout(() => {
+                manualSection.style.display = 'block';
+            }, 2000);
+        } else if (accessToken || emailChangeToken) {
+            // Token varsa otomatik olarak uygulamayı aç
+            openApp();
+
+            // Mesajı type'a göre ayarla
+            let successMessage = '<strong>✓ Başarılı!</strong> Yönlendiriliyorsunuz.';
+            if (type === 'recovery') {
+                successMessage = '<strong>✓ Başarılı!</strong> Şifre sıfırlama işlemi için yönlendiriliyorsunuz.';
+            } else if (type === 'email_change' || emailChangeToken) {
+                successMessage = '<strong>✓ Başarılı!</strong> E-posta değişikliği onaylandı. Uygulamaya yönlendiriliyorsunuz.';
+            }
+
+            // 2 saniye sonra manuel buton göster (fallback)
+            setTimeout(() => {
+                spinner.style.display = 'none';
+                message.textContent = 'Uygulama otomatik olarak açılmadıysa, aşağıdaki butona tıklayın.';
+                manualSection.style.display = 'block';
+            }, 2000);
+
+            // Başarı mesajı
+            setTimeout(() => {
+                infoBox.className = 'info success';
+                infoBox.style.display = 'block';
+                infoBox.innerHTML = successMessage;
+            }, 500);
+        } else {
+            // Token yoksa
+            spinner.style.display = 'none';
+            title.textContent = 'Geçersiz Bağlantı';
+            message.textContent = 'Bu bağlantı geçersiz veya süresi dolmuş. Lütfen yeni bir şifre sıfırlama isteği oluşturun.';
+            infoBox.className = 'info error';
+            infoBox.style.display = 'block';
+            infoBox.innerHTML = '<strong>⚠ Uyarı:</strong> Geçerli bir token bulunamadı.';
+        }
+
+        // Manuel açma butonu
+        openAppBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            openApp();
+
+            // Feedback
+            title.textContent = 'Uygulama Açılıyor...';
+            message.textContent = 'Lütfen bekleyin...';
+            spinner.style.display = 'block';
+
+            setTimeout(() => {
+                spinner.style.display = 'none';
+                title.textContent = 'Hala Açılmadı mı?';
+                message.innerHTML = 'Keeper uygulamasının yüklü olduğundan emin olun.<br>Eğer yüklü değilse, <strong>Google Play Store</strong>\'dan indirin.';
+            }, 3000);
+        });
+
+        // Debug için konsola yaz
+        console.log('Deep Link:', deepLink);
+        console.log('Access Token:', accessToken ? 'Var' : 'Yok');
+        console.log('Type:', type);
+        console.log('Error:', error);
+        console.log('Email Change Token:', emailChangeToken ? 'Var' : 'Yok');
+        console.log('Full Hash:', hash);
+        console.log('Full URL:', window.location.href);
+    </script>
+</body>
+</html>

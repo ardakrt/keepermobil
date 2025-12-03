@@ -23,7 +23,7 @@ import AccountActionSheet from '../components/AccountActionSheet';
 import AccountEditModal from '../components/AccountEditModal';
 
 const getServiceIcon = (service) => {
-  const s = service.toLowerCase();
+  const s = (service || '').toLowerCase();
   if (s.includes('google') || s.includes('gmail')) return 'logo-google';
   if (s.includes('facebook')) return 'logo-facebook';
   if (s.includes('twitter') || s.includes('x')) return 'logo-twitter';
@@ -32,14 +32,19 @@ const getServiceIcon = (service) => {
   if (s.includes('github')) return 'logo-github';
   if (s.includes('apple')) return 'logo-apple';
   if (s.includes('microsoft')) return 'logo-microsoft';
-  if (s.includes('netflix')) return 'logo-netflix';
-  if (s.includes('spotify')) return 'logo-spotify';
-  if (s.includes('amazon')) return 'logo-amazon';
+  if (s.includes('netflix')) return 'play-circle'; // Netflix icon fallback
+  if (s.includes('spotify')) return 'musical-notes'; // Spotify icon fallback
+  if (s.includes('amazon')) return 'cart'; // Amazon icon fallback
+  if (s.includes('youtube')) return 'logo-youtube';
+  if (s.includes('discord')) return 'logo-discord';
+  if (s.includes('reddit')) return 'logo-reddit';
+  if (s.includes('tiktok')) return 'logo-tiktok';
+  if (s.includes('whatsapp')) return 'logo-whatsapp';
   return 'person-circle';
 };
 
 const getServiceIconColor = (service) => {
-  const s = service.toLowerCase();
+  const s = (service || '').toLowerCase();
   if (s.includes('google') || s.includes('gmail')) return '#4285F4';
   if (s.includes('facebook')) return '#1877F2';
   if (s.includes('twitter') || s.includes('x')) return '#1DA1F2';
@@ -235,9 +240,11 @@ const AccountsScreen = () => {
 
       setUserId(currentUser.id);
 
+      // Basis Theory entegrasyonu sonrası güncellenen sorgu
+      // password_enc yerine bt_token_id_password geldi
       const { data: accountsData, error: accountsError } = await supabase
         .from('accounts')
-        .select('id, user_id, service, username_enc, password_enc, note, created_at')
+        .select('id, user_id, service, username_enc, bt_token_id_password, note, created_at')
         .eq('user_id', currentUser.id)
         .order('created_at', { ascending: false });
 
@@ -320,11 +327,21 @@ const AccountsScreen = () => {
 
   const handleCopyPassword = async (account) => {
     try {
-      await Clipboard.setStringAsync(account.password_enc ?? '');
-      showToast('Parola panoya kopyalandı.');
+      // Basis Theory token ID'si olduğu için direkt şifreyi kopyalayamıyoruz.
+      // Kullanıcıya bilgi veriyoruz.
+      // İleride Basis Theory Proxy ile şifre çözülüp kopyalanabilir.
+
+      // Geçici çözüm: Token ID'yi kopyalamak yerine kullanıcıya uyarı verelim
+      // veya web sürümüne yönlendirelim.
+      // Ancak şimdilik token ID'yi kopyalamak anlamsız olacağı için
+      // "Bu özellik şu an sadece web sürümünde aktif" diyebiliriz veya
+      // token ID'yi kopyalayabiliriz (debug için).
+
+      // Kullanıcı deneyimi açısından şimdilik bir toast mesajı gösterelim.
+      showToast('Şifre kopyalama şu an sadece web sürümünde aktif.');
 
       if (hapticsEnabled) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
     } catch (err) {
       console.warn('Copy failed', err);
@@ -334,9 +351,8 @@ const AccountsScreen = () => {
 
   const handleShare = async (account) => {
     try {
-      const message = `${account.service}\n\nKullanıcı Adı: ${account.username_enc}\nParola: ${account.password_enc}${
-        account.note ? `\n\nNot: ${account.note}` : ''
-      }`;
+      const message = `${account.service}\n\nKullanıcı Adı: ${account.username_enc}\n(Şifre korumalı)${account.note ? `\n\nNot: ${account.note}` : ''
+        }`;
 
       await Share.share({
         message: message,

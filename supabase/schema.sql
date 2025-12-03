@@ -21,12 +21,15 @@ create table if not exists public.cards (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   label text not null,
-  number_enc text not null,
+  bt_token_id text not null,
+  last_four text not null,
+  card_brand text not null,
   cvc_enc text,
   exp_month_enc text,
   exp_year_enc text,
   holder_name_enc text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create table if not exists public.accounts (

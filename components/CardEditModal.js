@@ -16,6 +16,7 @@ import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '../lib/theme';
 import { usePrefs } from '../lib/prefs';
 import { lookupBin } from '../lib/binLookup';
+import { getBasisTheory } from '../lib/basisTheory';
 import CreditCard from './CreditCard';
 
 const formatCardNumber = (value) => {
@@ -51,21 +52,24 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
   // Form verilerini kart objesi olarak önizleme için hazırla
   const previewCard = {
     label: label || 'Yeni Kart',
-    number_enc: number,
+    last_four: number.slice(-4), // Önizleme için son 4 hane
     holder_name_enc: holderName,
     expiry: expiry,
     cvc_enc: cvc,
     exp_month_enc: expiry.split('/')[0],
     exp_year_enc: expiry.split('/')[1],
+    cardBrand: cardBrand,
   };
 
   useEffect(() => {
     if (visible && card && mode === 'edit') {
       setLabel(card.label || '');
-      setNumber(card.number_enc || '');
+      // Düzenleme modunda sadece son 4 haneyi gösterebiliyoruz
+      setNumber(card.last_four || '');
       setHolderName(card.holder_name_enc || '');
       setExpiry(card.expiry || '');
       setCvc(card.cvc_enc || '');
+      setCardBrand(card.cardBrand);
     } else if (visible && mode === 'add') {
       resetForm();
     }
@@ -80,7 +84,18 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
         try {
           const result = await lookupBin(cleanNumber);
           setBinInfo(result);
-          setCardBrand(result?.cardBrand || null);
+
+          // Normalize card brand - Mastercard, Visa, Troy, etc.
+          let normalizedBrand = result?.cardBrand || null;
+          if (normalizedBrand) {
+            const brandLower = normalizedBrand.toLowerCase();
+            if (brandLower.includes('master')) normalizedBrand = 'Mastercard';
+            else if (brandLower.includes('visa')) normalizedBrand = 'Visa';
+            else if (brandLower.includes('troy')) normalizedBrand = 'Troy';
+            else if (brandLower.includes('amex') || brandLower.includes('american')) normalizedBrand = 'Amex';
+          }
+
+          setCardBrand(normalizedBrand);
 
           if (result && result.bankName && !label.trim() && mode === 'add') {
             const programSuffix = result.cardProgram ? ` ${result.cardProgram}` : '';
@@ -93,13 +108,18 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
         }
       } else {
         setBinInfo(null);
-        setCardBrand(null);
+        // Eğer düzenleme modundaysak ve numara değişmediyse eski markayı koru
+        if (mode === 'edit' && card && card.cardBrand && cleanNumber === card.last_four) {
+          setCardBrand(card.cardBrand);
+        } else if (cleanNumber.length < 6) {
+          setCardBrand(null);
+        }
       }
     };
 
     const timeoutId = setTimeout(performBinLookup, 500);
     return () => clearTimeout(timeoutId);
-  }, [number]);
+  }, [number, mode, card]);
 
   const resetForm = () => {
     setLabel('');
@@ -119,8 +139,14 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
     }
 
     const cleaned = normaliseNumber(number);
-    if (cleaned.length < 12 || cleaned.length > 19) {
+    // Düzenleme modunda sadece son 4 hane olabilir (4 hane) veya kullanıcı yeni numara girmiş olabilir (12-19 hane)
+    if (mode === 'add' && (cleaned.length < 12 || cleaned.length > 19)) {
       setError('Kart numarası 12-19 hane olmalıdır.');
+      return false;
+    }
+
+    if (mode === 'edit' && cleaned.length !== 4 && (cleaned.length < 12 || cleaned.length > 19)) {
+      setError('Kart numarası geçerli değil.');
       return false;
     }
 
@@ -147,14 +173,53 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
 
     try {
       const [month, year] = expiry.trim().split('/');
+      const cleanNumber = normaliseNumber(number);
+
+      let btTokenId = card?.bt_token_id; // Düzenleme modunda mevcut token ID
+      let lastFour = cleanNumber.length >= 4 ? cleanNumber.slice(-4) : cleanNumber;
+
+      // Eğer yeni kart ekliyoruz veya kart numarası değiştiyse Basis Theory ile tokenize et
+      if (mode === 'add' || (mode === 'edit' && cleanNumber.length >= 12)) {
+        try {
+          const bt = await getBasisTheory();
+
+          // Eski token varsa sil
+          if (card?.bt_token_id && mode === 'edit') {
+            try {
+              await bt.tokens.delete(card.bt_token_id);
+            } catch (deleteErr) {
+              console.warn('Old token deletion failed:', deleteErr);
+            }
+          }
+
+          // Yeni token oluştur
+          const token = await bt.tokens.create({
+            type: 'card',
+            data: {
+              number: cleanNumber,
+              expiration_month: parseInt(month, 10),
+              expiration_year: parseInt(year.length === 2 ? `20${year}` : year, 10),
+              cvc: cvc.trim(),
+            },
+          });
+
+          btTokenId = token.id;
+          lastFour = cleanNumber.slice(-4);
+        } catch (btErr) {
+          console.error('Basis Theory tokenization failed:', btErr);
+          throw new Error('Kart tokenizasyonu başarısız: ' + (btErr.message || 'Bilinmeyen hata'));
+        }
+      }
 
       const cardData = {
         label: label.trim(),
-        number_enc: normaliseNumber(number),
-        cvc_enc: cvc.trim(),
+        last_four: lastFour,
+        cvc_enc: '***', // CVC Basis Theory'de saklanıyor
         holder_name_enc: holderName.trim(),
         exp_month_enc: month,
         exp_year_enc: year,
+        card_brand: cardBrand ? cardBrand.toLowerCase() : 'unknown',
+        bt_token_id: btTokenId,
       };
 
       await onSave(cardData, card?.id);
@@ -248,7 +313,7 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
                 ]}
                 value={label}
                 onChangeText={setLabel}
-                placeholder="örn. İş Bankası Gold"
+                placeholder="örn. İş Bankası Visa"
                 placeholderTextColor={theme.colors.muted}
               />
             </View>
@@ -268,7 +333,7 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
                 ]}
                 value={holderName}
                 onChangeText={setHolderName}
-                placeholder="AD SOYAD"
+                placeholder="İsim Soyisim"
                 placeholderTextColor={theme.colors.muted}
                 autoCapitalize="characters"
               />
@@ -276,7 +341,7 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
 
             <View style={styles.inputGroup}>
               <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
-                Kart Numarası
+                Kart Numarası {mode === 'edit' && '(Sadece son 4 hane)'}
               </Text>
               <TextInput
                 style={[
@@ -292,7 +357,7 @@ const CardEditModal = ({ visible, card, onClose, onSave, mode = 'add' }) => {
                   const cleaned = value.replace(/\D/g, '').slice(0, 19);
                   setNumber(cleaned);
                 }}
-                placeholder="1234 5678 9012 3456"
+                placeholder={mode === 'edit' ? "•••• 1234" : "1234 5678 9012 3456"}
                 placeholderTextColor={theme.colors.muted}
                 keyboardType="number-pad"
                 maxLength={23}

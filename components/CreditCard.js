@@ -11,6 +11,13 @@ import * as Haptics from 'expo-haptics';
 import { usePrefs } from '../lib/prefs';
 
 const formatCardNumber = (value) => {
+  if (!value) return '•••• •••• •••• ••••';
+
+  // If it's already masked or short (last_four)
+  if (value.length <= 4) {
+    return `•••• •••• •••• ${value}`;
+  }
+
   const cleaned = value.replace(/\D/g, '');
   const chunks = cleaned.match(/.{1,4}/g) || [];
   return chunks.join(' ');
@@ -56,6 +63,10 @@ const getCardGradient = (brand, index = 0) => {
 const getCardBrand = (number) => {
   if (!number) return null;
   const cleaned = number.replace(/\D/g, '');
+
+  // If we only have last 4 digits, we can't determine brand reliably from number
+  if (cleaned.length <= 4) return null;
+
   const firstDigit = cleaned[0];
   const firstTwo = cleaned.substring(0, 2);
 
@@ -73,7 +84,9 @@ const CreditCard = ({ card, index = 0, onPress, style, cardBrand: propCardBrand 
   const flipAnim = useSharedValue(0);
   const scaleAnim = useSharedValue(1);
 
-  const cardBrand = propCardBrand || card.cardBrand || getCardBrand(card.number_enc);
+  // Always use last_four (full number is stored in Basis Theory)
+  const cardNumber = card.last_four;
+  const cardBrand = propCardBrand || card.cardBrand || getCardBrand(cardNumber);
   const gradient = getCardGradient(cardBrand, index);
 
   const handlePressIn = () => {
@@ -161,7 +174,7 @@ const CreditCard = ({ card, index = 0, onPress, style, cardBrand: propCardBrand 
             {/* Card Number */}
             <View style={styles.numberContainer}>
               <Text style={styles.cardNumber}>
-                {formatCardNumber(card.number_enc || '')}
+                {formatCardNumber(cardNumber || '')}
               </Text>
             </View>
 

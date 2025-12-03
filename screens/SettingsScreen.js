@@ -9,10 +9,10 @@ import {
   Alert,
   StatusBar,
 } from 'react-native';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import Animated, { FadeInDown, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabaseClient';
@@ -22,6 +22,7 @@ import { useAppTheme } from '../lib/theme';
 import { usePrefs } from '../lib/prefs';
 import { useToast } from '../lib/toast';
 import { useConfirm } from '../lib/confirm';
+import { usePushAuth } from '../lib/PushAuthContext';
 import Avatar from '../components/Avatar';
 
 const ACCENT_COLORS = [
@@ -42,23 +43,10 @@ const SettingsScreen = () => {
   const { hapticsEnabled, toggleHaptics, reduceMotion, toggleReduceMotion } = usePrefs();
   const { showToast } = useToast();
   const { confirm } = useConfirm();
+  const { enabled: pushAuthEnabled, setEnabled: setPushAuthEnabled, requireBiometric: pushAuthRequireBiometric, setRequireBiometric: setPushAuthRequireBiometric } = usePushAuth();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const [session, setSession] = useState(null);
-  const opacity = useSharedValue(0);
-
-  useFocusEffect(
-    useCallback(() => {
-      opacity.value = withTiming(1, { duration: 500 });
-      return () => {
-        opacity.value = withTiming(0, { duration: 250 });
-      };
-    }, [])
-  );
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: opacity.value,
-  }));
 
   const [loading, setLoading] = useState(true);
   const [biometricSupported, setBiometricSupported] = useState(false);
@@ -104,34 +92,39 @@ const SettingsScreen = () => {
 
   const enableBiometric = useCallback(async () => {
     if (!biometricSupported) {
-      Alert.alert('Desteklenmiyor', 'Bu cihaz biyometrik kimlik doğrulamayı desteklemiyor.');
+      showToast('Desteklenmiyor', 'Bu cihaz biyometrik kimlik doğrulamayı desteklemiyor.');
       return;
     }
     if (!biometricEnrolled) {
-      Alert.alert('Kayıtlı değil', 'Lütfen cihaz ayarlarınızdan parmak izi/yüz tanıma kaydedin.');
+      showToast('Kayıtlı Değil', 'Lütfen cihaz ayarlarından parmak izi veya yüz tanıma kaydedin.');
       return;
     }
 
     try {
-      const result = await localAuth.authenticateAsync({ promptMessage: 'Parmak izi ile giriş yapın' });
+      const result = await localAuth.authenticateAsync({ 
+        promptMessage: 'Parmak izi ile giriş yapın',
+        cancelLabel: 'Vazgeç',
+      });
+      
       if (!result.success) {
-        Alert.alert('İptal edildi', 'Parmak izi doğrulaması iptal edildi.');
+        // Kullanıcı iptal etti veya doğrulama başarısız
+        showToast('İptal Edildi', 'Parmak izi doğrulaması tamamlanmadı. Tekrar deneyebilirsiniz.');
         return;
       }
 
       const { data, error } = await supabase.auth.getSession();
       if (error || !data?.session) {
-        Alert.alert('Hata', 'Oturum bilgisi alınamadı.');
+        showToast('Hata', 'Oturum bilgisi alınamadı.');
         return;
       }
 
       await biometricPrefs.setOptIn(true);
       await biometricPrefs.setStoredSession(data.session);
 
-      showToast('Başarılı', 'Parmak izi ile giriş aktif edildi');
+      showToast('Aktif Edildi', 'Artık parmak izinizle giriş yapabilirsiniz 🎉');
       await loadBiometricState();
     } catch (err) {
-      Alert.alert('Hata', err.message ?? 'Parmak izi aktif edilemedi.');
+      showToast('Hata', err.message ?? 'Parmak izi aktif edilemedi.');
     }
   }, [biometricSupported, biometricEnrolled, loadBiometricState, showToast]);
 
@@ -387,7 +380,7 @@ const SettingsScreen = () => {
   );
 
   return (
-    <Animated.View style={[styles.container, animatedStyle]}>
+    <View style={styles.container}>
       <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
 
       {/* Custom Header */}
@@ -439,6 +432,57 @@ const SettingsScreen = () => {
               thumbColor="#fff"
             />
           </TouchableOpacity>
+        </Animated.View>
+
+        {/* Push to Login */}
+        <Animated.View entering={FadeInDown.delay(25).duration(400)} style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Web Giriş Onayı</Text>
+
+          <TouchableOpacity
+            style={[styles.settingItem, pushAuthEnabled && styles.settingItemActive]}
+            onPress={() => setPushAuthEnabled(!pushAuthEnabled)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.iconContainer}>
+              <MaterialCommunityIcons name="shield-key" size={22} color={theme.colors.primary} />
+            </View>
+            <View style={styles.settingContent}>
+              <Text style={styles.settingTitle}>Push to Login</Text>
+              <Text style={styles.settingSubtitle}>
+                Bilgisayardan giriş yaparken mobil onay iste
+              </Text>
+            </View>
+            <Switch
+              value={pushAuthEnabled}
+              onValueChange={setPushAuthEnabled}
+              trackColor={{ false: theme.colors.muted, true: theme.colors.primary }}
+              thumbColor="#fff"
+            />
+          </TouchableOpacity>
+
+          {pushAuthEnabled && (
+            <TouchableOpacity
+              style={styles.settingItem}
+              onPress={() => setPushAuthRequireBiometric(!pushAuthRequireBiometric)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.iconContainer}>
+                <Ionicons name="finger-print" size={22} color={theme.colors.success} />
+              </View>
+              <View style={styles.settingContent}>
+                <Text style={styles.settingTitle}>Biyometrik Doğrulama</Text>
+                <Text style={styles.settingSubtitle}>
+                  Onaylamadan önce parmak izi veya yüz tanıma iste
+                </Text>
+              </View>
+              <Switch
+                value={pushAuthRequireBiometric}
+                onValueChange={setPushAuthRequireBiometric}
+                trackColor={{ false: theme.colors.muted, true: theme.colors.success }}
+                thumbColor="#fff"
+              />
+            </TouchableOpacity>
+          )}
         </Animated.View>
 
         {/* Görünüm */}
@@ -653,7 +697,7 @@ const SettingsScreen = () => {
           </TouchableOpacity>
         </Animated.View>
       </ScrollView>
-    </Animated.View>
+    </View>
   );
 };
 

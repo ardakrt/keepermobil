@@ -18,6 +18,7 @@ import { useToast } from '../lib/toast';
 import { usePrefs } from '../lib/prefs';
 import { useConfirm } from '../lib/confirm';
 import { lookupBin } from '../lib/binLookup';
+import { getBasisTheory } from '../lib/basisTheory';
 
 import CardActionSheet from '../components/CardActionSheet';
 import CardEditModal from '../components/CardEditModal';
@@ -34,30 +35,14 @@ const normaliseCard = (card) => {
   return {
     ...card,
     expiry,
+    // card_brand veritabanından geliyor, yoksa fallback
+    cardBrand: card.card_brand ? card.card_brand.toUpperCase() : 'CARD',
   };
 };
 
-const formatMaskedNumber = (number) => {
-  if (!number) return '•••• •••• •••• ••••';
-  const cleaned = number.replace(/\D/g, '');
-  const first4 = cleaned.substring(0, 4);
-  const last4 = cleaned.substring(cleaned.length - 4);
-  return `${first4} ${cleaned.substring(4, 6)}** **** ${last4}`;
-};
-
-const getCardBrand = (number) => {
-  if (!number) return null;
-  const cleaned = number.replace(/\D/g, '');
-  const firstDigit = cleaned[0];
-  const firstTwo = cleaned.substring(0, 2);
-
-  if (firstDigit === '4') return 'VISA';
-  if (firstTwo >= '51' && firstTwo <= '55') return 'MASTERCARD';
-  if (firstTwo === '65') return 'TROY';
-  if (firstTwo === '35') return 'MASTERCARD';
-  if (firstTwo === '37') return 'MASTERCARD';
-
-  return 'CARD';
+const formatMaskedNumber = (lastFour) => {
+  if (!lastFour) return '•••• •••• •••• ••••';
+  return `•••• •••• •••• ${lastFour}`;
 };
 
 const CardsScreen = () => {
@@ -212,26 +197,19 @@ const CardsScreen = () => {
 
       setUserId(currentUser.id);
 
+      // Basis Theory entegrasyonu sonrası güncellenen sorgu
       const { data: cardsData, error: cardsError } = await supabase
         .from('cards')
         .select(
-          'id, user_id, label, number_enc, cvc_enc, created_at, exp_month_enc, exp_year_enc, holder_name_enc'
+          'id, user_id, label, last_four, card_brand, bt_token_id, cvc_enc, created_at, exp_month_enc, exp_year_enc, holder_name_enc'
         )
         .eq('user_id', currentUser.id)
         .order('created_at', { ascending: false });
 
       if (cardsError) throw cardsError;
 
-      // Kartları hemen yükle, BIN lookup yapmadan (performans için)
-      const cardsWithBrand = (cardsData ?? []).map((card) => {
-        const normalized = normaliseCard(card);
-        return {
-          ...normalized,
-          cardBrand: getCardBrand(card.number_enc), // Sadece regex ile hızlı marka tespiti
-        };
-      });
-
-      setCards(cardsWithBrand);
+      const normalizedCards = (cardsData ?? []).map(normaliseCard);
+      setCards(normalizedCards);
     } catch (err) {
       console.warn('Fetch cards failed', err);
       setError(err.message ?? 'Kartlar yüklenirken hata oluştu.');
@@ -297,24 +275,56 @@ const CardsScreen = () => {
       let value = '';
       switch (field) {
         case 'number':
-          value = card.number_enc ?? '';
+          // Basis Theory'den tam kart numarasını retrieve et
+          if (card.bt_token_id) {
+            try {
+              const bt = await getBasisTheory();
+              const token = await bt.tokens.retrieve(card.bt_token_id);
+              value = token?.data?.number || formatMaskedNumber(card.last_four);
+              showToast('Kart numarası kopyalandı.');
+            } catch (btErr) {
+              console.warn('BT reveal failed:', btErr);
+              value = formatMaskedNumber(card.last_four);
+              showToast('Maskeli numara kopyalandı (tam numara alınamadı).');
+            }
+          } else {
+            value = formatMaskedNumber(card.last_four);
+            showToast('Maskeli numara kopyalandı.');
+          }
           break;
         case 'expiry':
           value = card.expiry ?? '';
+          showToast('SKT kopyalandı.');
           break;
         case 'cvc':
-          value = card.cvc_enc ?? '';
+          // CVC de Basis Theory'den al
+          if (card.bt_token_id) {
+            try {
+              const bt = await getBasisTheory();
+              const token = await bt.tokens.retrieve(card.bt_token_id);
+              value = token?.data?.cvc || card.cvc_enc || '';
+              showToast('CVC kopyalandı.');
+            } catch (btErr) {
+              console.warn('BT reveal CVC failed:', btErr);
+              value = card.cvc_enc ?? '';
+              showToast('CVC kopyalandı.');
+            }
+          } else {
+            value = card.cvc_enc ?? '';
+            showToast('CVC kopyalandı.');
+          }
           break;
         case 'holder':
           value = card.holder_name_enc ?? '';
+          showToast('Kart sahibi kopyalandı.');
           break;
       }
 
-      await Clipboard.setStringAsync(value);
-      showToast('Panoya kopyalandı.');
-
-      if (hapticsEnabled) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      if (value) {
+        await Clipboard.setStringAsync(value);
+        if (hapticsEnabled) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
       }
     } catch (err) {
       console.warn('Copy failed', err);
@@ -327,7 +337,22 @@ const CardsScreen = () => {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
 
-    const cardInfo = `Kart No: ${card.number_enc}\nSKT: ${card.expiry}\nCVC: ${card.cvc_enc}`;
+    let cardNumber = formatMaskedNumber(card.last_four);
+    let cvc = card.cvc_enc || '';
+
+    // Basis Theory'den tam bilgileri al
+    if (card.bt_token_id) {
+      try {
+        const bt = await getBasisTheory();
+        const token = await bt.tokens.retrieve(card.bt_token_id);
+        cardNumber = token?.data?.number || cardNumber;
+        cvc = token?.data?.cvc || cvc;
+      } catch (btErr) {
+        console.warn('BT reveal on long press failed:', btErr);
+      }
+    }
+
+    const cardInfo = `Kart No: ${cardNumber}\nSKT: ${card.expiry}\nCVC: ${cvc}`;
 
     try {
       await Clipboard.setStringAsync(cardInfo);
@@ -339,8 +364,23 @@ const CardsScreen = () => {
   };
 
   const handleShare = async (card) => {
+    let cardNumber = formatMaskedNumber(card.last_four);
+    let cvc = card.cvc_enc || '';
+
+    // Basis Theory'den tam bilgileri al
+    if (card.bt_token_id) {
+      try {
+        const bt = await getBasisTheory();
+        const token = await bt.tokens.retrieve(card.bt_token_id);
+        cardNumber = token?.data?.number || cardNumber;
+        cvc = token?.data?.cvc || cvc;
+      } catch (btErr) {
+        console.warn('BT reveal on share failed:', btErr);
+      }
+    }
+
     try {
-      const message = `${card.label}\n\nKart No: ${card.number_enc}\nSKT: ${card.expiry}\nCVC: ${card.cvc_enc}\nKart Sahibi: ${card.holder_name_enc}`;
+      const message = `${card.label}\n\nKart No: ${cardNumber}\nSKT: ${card.expiry}\nCVC: ${cvc}\nKart Sahibi: ${card.holder_name_enc}`;
 
       await Share.share({
         message: message,
@@ -365,6 +405,18 @@ const CardsScreen = () => {
     if (!confirmed) return;
 
     try {
+      // Önce Basis Theory token'ını sil
+      if (card.bt_token_id) {
+        try {
+          const bt = await getBasisTheory();
+          await bt.tokens.delete(card.bt_token_id);
+        } catch (btErr) {
+          console.warn('Basis Theory token deletion failed:', btErr);
+          // Token silinmese bile devam et
+        }
+      }
+
+      // Supabase'den kartı sil
       const { error: deleteError } = await supabase.from('cards').delete().eq('id', card.id);
 
       if (deleteError) throw deleteError;
@@ -390,6 +442,11 @@ const CardsScreen = () => {
       throw new Error('Oturum bulunamadı. Tekrar giriş yapın.');
     }
 
+    // Not: Basis Theory entegrasyonu için buranın da güncellenmesi gerekebilir.
+    // Şimdilik mevcut yapıyı koruyoruz, ancak yeni kart ekleme muhtemelen
+    // web tarafında veya farklı bir akışla yapılıyor olabilir.
+    // Eğer React Native üzerinden kart eklenecekse, Basis Theory Proxy kullanılmalı.
+    
     const payload = {
       ...cardData,
       user_id: userId,
@@ -407,17 +464,6 @@ const CardsScreen = () => {
       if (updateError) throw updateError;
 
       const updatedCard = normaliseCard(data);
-
-      // BIN lookup
-      try {
-        const binInfo = await lookupBin(data.number_enc);
-        updatedCard.binInfo = binInfo;
-        updatedCard.cardBrand = binInfo?.cardBrand || getCardBrand(data.number_enc);
-      } catch (err) {
-        console.warn('BIN lookup failed:', err);
-        updatedCard.cardBrand = getCardBrand(data.number_enc);
-      }
-
       setCards((prev) => prev.map((c) => (c.id === cardId ? updatedCard : c)));
       showToast('Kart güncellendi.');
     } else {
@@ -431,17 +477,6 @@ const CardsScreen = () => {
       if (insertError) throw insertError;
 
       const insertedCard = normaliseCard(data);
-
-      // BIN lookup
-      try {
-        const binInfo = await lookupBin(data.number_enc);
-        insertedCard.binInfo = binInfo;
-        insertedCard.cardBrand = binInfo?.cardBrand || getCardBrand(data.number_enc);
-      } catch (err) {
-        console.warn('BIN lookup failed:', err);
-        insertedCard.cardBrand = getCardBrand(data.number_enc);
-      }
-
       setCards((prev) => [insertedCard, ...prev]);
       showToast('Kart başarıyla eklendi.');
     }
@@ -494,7 +529,7 @@ const CardsScreen = () => {
               {/* Card Info */}
               <View style={styles.cardInfo}>
                 <Text style={styles.cardLabel}>{card.label}</Text>
-                <Text style={styles.cardNumber}>{formatMaskedNumber(card.number_enc)}</Text>
+                <Text style={styles.cardNumber}>{formatMaskedNumber(card.last_four)}</Text>
               </View>
 
               {/* Chevron */}
