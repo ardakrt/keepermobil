@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   StyleSheet,
@@ -10,12 +10,17 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Keyboard,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useAppTheme } from '../lib/theme';
 import { usePrefs } from '../lib/prefs';
+import { getBankInfo } from '../lib/serviceIcons';
+import ServiceLogo from './ServiceLogo';
 
 const normaliseIban = (value) => value.replace(/\s+/g, '').toUpperCase();
 
@@ -43,7 +48,11 @@ const isValidIban = (value) => {
 };
 
 const IbanEditModal = ({ visible, iban, onClose, onSave, mode = 'add' }) => {
-  const { theme } = useAppTheme();
+  /* 
+   * Redesigned IbanEditModal 
+   * Includes a live card preview and cleaner input fields.
+   */
+  const { theme, accent } = useAppTheme();
   const { hapticsEnabled } = usePrefs();
 
   const [label, setLabel] = useState('');
@@ -51,6 +60,48 @@ const IbanEditModal = ({ visible, iban, onClose, onSave, mode = 'add' }) => {
   const [bank, setBank] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // Accent color or fallback
+  const activeColor = accent || theme.colors.primary;
+
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const keyboardHeight = useRef(new Animated.Value(0)).current;
+  const scrollViewRef = useRef(null);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSubscription = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardVisible(true);
+      Animated.timing(keyboardHeight, {
+        toValue: e.endCoordinates.height,
+        duration: Platform.OS === 'ios' ? 250 : 100,
+        useNativeDriver: false,
+      }).start();
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      Animated.timing(keyboardHeight, {
+        toValue: 0,
+        duration: Platform.OS === 'ios' ? 250 : 100,
+        useNativeDriver: false,
+      }).start();
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [keyboardHeight]);
+
+  const handleInputFocus = (inputIndex) => {
+    setKeyboardVisible(true);
+    // ScrollView'ı input'a kaydır
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: inputIndex * 80, animated: true });
+    }, 300);
+  };
 
   useEffect(() => {
     if (visible && iban && mode === 'edit') {
@@ -125,275 +176,397 @@ const IbanEditModal = ({ visible, iban, onClose, onSave, mode = 'add' }) => {
   };
 
   const ibanIsValid = ibanValue.trim() ? isValidIban(ibanValue) : null;
+  const formattedIban = formatIbanGroups(ibanValue);
 
   return (
     <Modal
       visible={visible}
       animationType="slide"
-      presentationStyle="pageSheet"
+      transparent={true}
       onRequestClose={handleClose}
     >
-      <KeyboardAvoidingView
-        style={[styles.container, { backgroundColor: theme.colors.background }]}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        {/* Header */}
-        <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={handleClose}
-            onPressIn={() => {
-              if (hapticsEnabled) {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              }
-            }}
-          >
-            <Ionicons name="close" size={28} color={theme.colors.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
-            {mode === 'add' ? 'Yeni IBAN Ekle' : 'IBAN Düzenle'}
-          </Text>
-          <View style={styles.placeholder} />
-        </View>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity
+          style={styles.backdrop}
+          activeOpacity={1}
+          onPress={handleClose}
+        />
 
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          style={[styles.sheetContainer, { backgroundColor: theme.colors.background }]}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
         >
-          {/* Form */}
-          <View style={styles.form}>
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
-                IBAN Etiketi
-              </Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: theme.colors.surfaceElevated,
-                    borderColor: theme.colors.border,
-                    color: theme.colors.text,
-                  },
-                ]}
-                value={label}
-                onChangeText={setLabel}
-                placeholder="örn. Kişisel TR"
-                placeholderTextColor={theme.colors.muted}
-              />
-            </View>
+          {/* Handle Bar */}
+          <View style={styles.handleContainer}>
+            <View style={[styles.handle, { backgroundColor: theme.dark ? '#38383A' : '#E5E5EA' }]} />
+          </View>
 
-            <View style={styles.inputGroup}>
-              <View style={styles.labelRow}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
-                  IBAN Numarası
-                </Text>
-                {ibanIsValid !== null && (
-                  <View
-                    style={[
-                      styles.validationBadge,
-                      {
-                        backgroundColor: ibanIsValid
-                          ? theme.colors.success + '22'
-                          : theme.colors.danger + '22',
-                        borderColor: ibanIsValid
-                          ? theme.colors.success + '55'
-                          : theme.colors.danger + '55',
-                      },
-                    ]}
-                  >
-                    <Ionicons
-                      name={ibanIsValid ? 'checkmark-circle' : 'close-circle'}
-                      size={14}
-                      color={ibanIsValid ? theme.colors.success : theme.colors.danger}
-                    />
-                    <Text
-                      style={[
-                        styles.validationText,
-                        {
-                          color: ibanIsValid ? theme.colors.success : theme.colors.danger,
-                        },
-                      ]}
-                    >
-                      {ibanIsValid ? 'Geçerli' : 'Hatalı'}
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
+              {mode === 'add' ? 'Yeni IBAN' : 'IBAN Düzenle'}
+            </Text>
+            <TouchableOpacity
+              style={[styles.closeButton, { backgroundColor: theme.colors.surfaceElevated }]}
+              onPress={handleClose}
+            >
+              <Ionicons name="close" size={20} color={theme.colors.text} />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            ref={scrollViewRef}
+            contentContainerStyle={[styles.content, { paddingBottom: keyboardVisible ? 20 : 120 }]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            style={{ flex: 1 }}
+          >
+            {/* Live Preview Card */}
+            {!keyboardVisible && (
+              <View style={styles.previewContainer}>
+                <View style={[styles.cardPreview, { backgroundColor: activeColor, shadowColor: activeColor }]}>
+                  <LinearGradient
+                    colors={['rgba(255,255,255,0.15)', 'rgba(0,0,0,0.05)']}
+                    style={StyleSheet.absoluteFill}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  />
+
+                  {/* Decoration Circles */}
+                  <View style={[styles.decoCircle, { right: -20, top: -20, backgroundColor: 'rgba(255,255,255,0.1)' }]} />
+                  <View style={[styles.decoCircle, { left: -30, bottom: -30, width: 100, height: 100, backgroundColor: 'rgba(255,255,255,0.05)' }]} />
+
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardBank} numberOfLines={1}>
+                      {bank || 'Banka Adı'}
+                    </Text>
+                    {/* Bank Logo */}
+                    {getBankInfo(bank) ? (
+                      <ServiceLogo
+                        brand={getBankInfo(bank)}
+                        fallbackText={bank?.slice(0, 2) || '?'}
+                        size="sm"
+                        style={styles.bankLogo}
+                      />
+                    ) : (
+                      <Ionicons name="copy-outline" size={18} color="rgba(255,255,255,0.6)" />
+                    )}
+                  </View>
+
+                  <View style={styles.cardBody}>
+                    <Text style={styles.cardIbanLabel}>TR</Text>
+                    <Text style={styles.cardIban} adjustsFontSizeToFit numberOfLines={1}>
+                      {formattedIban || '00 0000 0000 0000 0000 0000 00'}
                     </Text>
                   </View>
-                )}
+
+                  <View style={styles.cardFooter}>
+                    <View>
+                      <Text style={styles.cardLabelTitle}>HESAP SAHİBİ</Text>
+                      <Text style={styles.cardLabel} numberOfLines={1}>
+                        {label || 'İsim Soyisim'}
+                      </Text>
+                    </View>
+                    {ibanIsValid !== null && (
+                      <View style={[styles.validationBadge, { backgroundColor: ibanIsValid ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)' }]}>
+                        <Ionicons
+                          name={ibanIsValid ? 'checkmark-circle' : 'alert-circle'}
+                          size={14}
+                          color={ibanIsValid ? '#4ade80' : '#f87171'}
+                        />
+                        <Text style={[styles.validationText, { color: ibanIsValid ? '#4ade80' : '#f87171' }]}>
+                          {ibanIsValid ? 'Geçerli' : 'Hatalı'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
               </View>
-              <TextInput
-                style={[
-                  styles.input,
-                  styles.ibanInput,
-                  {
-                    backgroundColor: theme.colors.surfaceElevated,
-                    borderColor: theme.colors.border,
-                    color: theme.colors.text,
-                  },
-                ]}
-                value={formatIbanGroups(ibanValue)}
-                onChangeText={(value) => setIbanValue(value.toUpperCase())}
-                placeholder="TR00 0000 0000 0000 0000 0000 00"
-                placeholderTextColor={theme.colors.muted}
-                autoCapitalize="characters"
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
-                Banka Adı (İsteğe Bağlı)
-              </Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: theme.colors.surfaceElevated,
-                    borderColor: theme.colors.border,
-                    color: theme.colors.text,
-                  },
-                ]}
-                value={bank}
-                onChangeText={setBank}
-                placeholder="örn. Türkiye İş Bankası"
-                placeholderTextColor={theme.colors.muted}
-              />
-            </View>
-          </View>
-
-          {/* IBAN Info */}
-          <View style={[styles.infoBox, { backgroundColor: theme.colors.surfaceElevated }]}>
-            <Ionicons name="information-circle" size={20} color={theme.colors.primary} />
-            <Text style={[styles.infoText, { color: theme.colors.textSecondary }]}>
-              IBAN numaranız otomatik olarak doğrulanacaktır. TR ile başlayan Türkiye IBAN'ları 26
-              karakter uzunluğundadır.
-            </Text>
-          </View>
-
-          {/* Error Message */}
-          {error ? (
-            <View style={[styles.errorContainer, { backgroundColor: theme.colors.dangerLight }]}>
-              <Ionicons name="alert-circle" size={20} color={theme.colors.danger} />
-              <Text style={[styles.errorText, { color: theme.colors.danger }]}>{error}</Text>
-            </View>
-          ) : null}
-        </ScrollView>
-
-        {/* Save Button */}
-        <View style={[styles.footer, { borderTopColor: theme.colors.border }]}>
-          <TouchableOpacity
-            style={[
-              styles.saveButton,
-              { backgroundColor: theme.colors.primary },
-              saving && styles.saveButtonDisabled,
-            ]}
-            onPress={handleSave}
-            disabled={saving}
-            onPressIn={() => {
-              if (hapticsEnabled) {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              }
-            }}
-          >
-            {saving ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <>
-                <Ionicons name="checkmark-circle" size={24} color="#FFFFFF" />
-                <Text style={styles.saveButtonText}>
-                  {mode === 'add' ? 'IBAN Ekle' : 'Değişiklikleri Kaydet'}
-                </Text>
-              </>
             )}
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
+
+            {/* Form Inputs */}
+            <View style={styles.form}>
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>IBAN BİLGİLERİ</Text>
+
+                <View style={[styles.inputContainer, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}>
+                  <View style={styles.inputIcon}>
+                    <Ionicons name="person-outline" size={20} color={theme.colors.muted} />
+                  </View>
+                  <TextInput
+                    style={[styles.input, { color: theme.colors.text }]}
+                    value={label}
+                    onChangeText={setLabel}
+                    onFocus={() => handleInputFocus(0)}
+                    placeholder="İsim Soyisim"
+                    placeholderTextColor={theme.colors.muted}
+                    autoCapitalize="words"
+                  />
+                </View>
+
+                <View style={[styles.inputContainer, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}>
+                  <View style={styles.inputIcon}>
+                    <Text style={{ fontSize: 13, fontWeight: '700', color: theme.colors.muted }}>TR</Text>
+                  </View>
+                  <TextInput
+                    style={[styles.input, styles.ibanInput, { color: theme.colors.text }]}
+                    value={formattedIban}
+                    onChangeText={(value) => setIbanValue(value.toUpperCase())}
+                    onFocus={() => handleInputFocus(1)}
+                    placeholder="00 0000 0000 0000 0000 0000 00"
+                    placeholderTextColor={theme.colors.muted}
+                    autoCapitalize="characters"
+                    keyboardType={Platform.OS === 'ios' ? 'default' : 'visible-password'}
+                  />
+                </View>
+
+                <View style={[styles.inputContainer, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}>
+                  <View style={styles.inputIcon}>
+                    <Ionicons name="business-outline" size={20} color={theme.colors.muted} />
+                  </View>
+                  <TextInput
+                    style={[styles.input, { color: theme.colors.text }]}
+                    value={bank}
+                    onChangeText={setBank}
+                    onFocus={() => handleInputFocus(2)}
+                    placeholder="Banka Adı (İsteğe Bağlı)"
+                    placeholderTextColor={theme.colors.muted}
+                  />
+                </View>
+              </View>
+
+              {error ? (
+                <View style={[styles.errorContainer, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+                  <Ionicons name="alert-circle" size={20} color={theme.colors.danger} />
+                  <Text style={[styles.errorText, { color: theme.colors.danger }]}>{error}</Text>
+                </View>
+              ) : null}
+            </View>
+
+          </ScrollView>
+
+          {/* Footer Action - Hidden when keyboard is visible */}
+          {!keyboardVisible && (
+            <View style={[
+              styles.footer,
+              {
+                backgroundColor: theme.colors.background,
+                borderTopColor: theme.colors.border,
+              }
+            ]}>
+              <TouchableOpacity
+                style={[
+                  styles.saveButton,
+                  { backgroundColor: activeColor, shadowColor: activeColor },
+                  saving && styles.saveButtonDisabled,
+                ]}
+                onPress={handleSave}
+                disabled={saving}
+                activeOpacity={0.8}
+              >
+                {saving ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.saveButtonText}>
+                    {mode === 'add' ? 'Ekle' : 'Kaydet'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  modalOverlay: {
     flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)', // Dimmed background
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  sheetContainer: {
+    marginTop: 60,
+    flex: 1, // Use flex to fill available space instead of fixed percentage
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 24,
+  },
+  handleContainer: {
+    alignItems: 'center',
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    opacity: 0.5,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-  },
-  closeButton: {
-    padding: 4,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    paddingTop: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: -0.5,
   },
-  placeholder: {
+  closeButton: {
     width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   content: {
     padding: 20,
-    gap: 20,
   },
-  form: {
-    gap: 20,
-  },
-  inputGroup: {
-    gap: 8,
-  },
-  labelRow: {
-    flexDirection: 'row',
+  previewContainer: {
+    marginBottom: 32,
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  inputLabel: {
-    fontSize: 13,
+  cardPreview: {
+    width: '100%',
+    height: 190,
+    borderRadius: 24,
+    padding: 24,
+    justifyContent: 'space-between',
+    overflow: 'hidden',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  decoCircle: {
+    position: 'absolute',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardBank: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+    opacity: 0.9,
+    flex: 1,
+    marginRight: 10,
+  },
+  bankLogo: {
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  cardBody: {
+    justifyContent: 'center',
+  },
+  cardIbanLabel: {
+    color: '#FFFFFF',
+    fontSize: 12,
     fontWeight: '600',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
+    opacity: 0.7,
+    marginBottom: 4,
+  },
+  cardIban: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+  },
+  cardLabelTitle: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+    opacity: 0.6,
+    marginBottom: 2,
+  },
+  cardLabel: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+    maxWidth: 160,
   },
   validationBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    borderWidth: 1,
-    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    gap: 6,
   },
   validationText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
   },
-  input: {
-    height: 52,
-    borderRadius: 14,
-    borderWidth: 1.5,
+  form: {
+    gap: 24,
+  },
+  inputGroup: {
+    gap: 16,
+  },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 56,
+    borderRadius: 16,
+    borderWidth: 1,
     paddingHorizontal: 16,
+  },
+  inputIcon: {
+    width: 24,
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  input: {
+    flex: 1,
+    height: '100%',
     fontSize: 16,
     fontWeight: '500',
   },
   ibanInput: {
-    fontFamily: 'monospace',
-    letterSpacing: 1,
-  },
-  infoBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: 14,
-    borderRadius: 12,
-    gap: 10,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 18,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    letterSpacing: 0.5,
+    fontSize: 15,
   },
   errorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 14,
-    borderRadius: 12,
+    padding: 16,
+    borderRadius: 16,
     gap: 10,
   },
   errorText: {
@@ -402,22 +575,23 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     padding: 20,
     paddingBottom: 34,
-    borderTopWidth: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   saveButton: {
-    flexDirection: 'row',
+    height: 56,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 16,
-    gap: 10,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
     elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
   },
   saveButtonDisabled: {
     opacity: 0.7,

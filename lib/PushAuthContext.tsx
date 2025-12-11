@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
-import { Alert } from 'react-native';
+import { Alert, AppState, AppStateStatus } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
@@ -284,8 +284,15 @@ export function PushAuthProvider({ children, userId }: PushAuthProviderProps) {
       // Show in-app modal
       setPendingRequest(request);
 
-      // ALSO trigger interactive notification
-      await triggerLoginNotification(request);
+      // Only trigger notification if app is in background
+      // When app is in foreground (active), the modal is enough
+      const currentAppState = AppState.currentState;
+      if (currentAppState !== 'active') {
+        await triggerLoginNotification(request);
+        console.log('📬 App is in background, notification triggered');
+      } else {
+        console.log('📱 App is active, skipping notification (modal is shown)');
+      }
     },
     [enabled, userId]
   );

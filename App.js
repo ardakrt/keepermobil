@@ -13,6 +13,7 @@ import {
   Linking,
   Dimensions,
   Vibration,
+  DeviceEventEmitter,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -52,18 +53,34 @@ import PushAuthModal from './components/PushAuthModal';
 
 // Other Imports
 import { supabase } from './lib/supabaseClient';
-import { BIOMETRIC_ENABLED_KEY, BIOMETRIC_SESSION_KEY, REMEMBER_KEY, REMEMBER_EMAIL_KEY, REMEMBER_PASSWORD_KEY, SESSION_KEY } from './lib/storageKeys';
+import { BIOMETRIC_ENABLED_KEY, BIOMETRIC_SESSION_KEY, REMEMBER_KEY, REMEMBER_EMAIL_KEY, REMEMBER_PASSWORD_KEY, SESSION_KEY, USER_PIN_KEY, PIN_SESSION_KEY } from './lib/storageKeys';
 import { localAuth } from './lib/localAuth';
+import { prefetchAllData, clearPrefetchCache, restorePrefetchCache } from './lib/prefetchService';
 
 // Setup - High importance channel for bypassing battery optimization
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    priority: Notifications.AndroidNotificationPriority.HIGH,
-  }),
+  handleNotification: async (notification) => {
+    // Don't show LOGIN_REQUEST notifications when app is in foreground
+    // The in-app modal will handle it instead
+    const categoryId = notification.request.content.categoryIdentifier;
+    if (categoryId === 'LOGIN_REQUEST') {
+      return {
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+
+    // Show all other notifications normally
+    return {
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: true,
+      shouldSetBadge: false,
+      priority: Notifications.AndroidNotificationPriority.HIGH,
+    };
+  },
 });
 
 // Create high importance notification channel for Android
@@ -137,7 +154,7 @@ const BlurredTabBar = ({ state, descriptors, navigation, insets, styles }) => {
                   } catch {
                     try {
                       Vibration.vibrate(50);
-                    } catch {}
+                    } catch { }
                   }
                 }
                 navigation.navigate(route.name, route.params);
@@ -151,7 +168,7 @@ const BlurredTabBar = ({ state, descriptors, navigation, insets, styles }) => {
                 } catch {
                   try {
                     Vibration.vibrate(100);
-                  } catch {}
+                  } catch { }
                 }
               }
               navigation.emit({ type: 'tabLongPress', target: route.key });
@@ -203,32 +220,48 @@ const TabIcon = React.memo(({ name, color, size, focused, routeName }) => {
   const badge = (routeName === 'Reminders' || routeName === 'Defter') ? (counts['reminders'] || 0) : 0;
 
   const animatedStyle = useAnimatedStyle(() => {
-      if (reduceMotion) {
-        return {
-          transform: [{ scale: focused ? 1.1 : 1 }],
-        };
-      }
-      const scale = withSpring(focused ? 1.2 : 1, { damping: 10, stiffness: 100 });
-      const translateY = withSpring(focused ? -5 : 0, { damping: 10, stiffness: 100 });
-      const rotate = withSpring(focused ? '0deg' : '-8deg', { damping: 12, stiffness: 150 });
+    if (reduceMotion) {
       return {
-          transform: [{ rotate }, { scale }, { translateY }],
+        transform: [{ scale: focused ? 1.1 : 1 }],
       };
+    }
+    const scale = withSpring(focused ? 1.2 : 1, { damping: 10, stiffness: 100 });
+    const translateY = withSpring(focused ? -5 : 0, { damping: 10, stiffness: 100 });
+    const rotate = withSpring(focused ? '0deg' : '-8deg', { damping: 12, stiffness: 150 });
+    return {
+      transform: [{ rotate }, { scale }, { translateY }],
+    };
   }, [focused, reduceMotion]);
 
   return (
     <Animated.View style={[animatedStyle, { alignItems: 'center' }]}>
       <MaterialCommunityIcons name={name} color={color} size={size} />
       {badge > 0 ? (
-          <View style={{ position: 'absolute', top: -4, right: -12, backgroundColor: theme.colors.danger, borderRadius: 999, minWidth: 18, height: 18, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: theme.colors.surface }}>
-            <Text style={{ color: 'white', fontSize: 10, fontWeight: '700' }} numberOfLines={1}>
-              {badge > 99 ? '99+' : String(badge)}
-            </Text>
-          </View>
+        <View style={{ position: 'absolute', top: -4, right: -12, backgroundColor: theme.colors.danger, borderRadius: 999, minWidth: 18, height: 18, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: theme.colors.surface }}>
+          <Text style={{ color: 'white', fontSize: 10, fontWeight: '700' }} numberOfLines={1}>
+            {badge > 99 ? '99+' : String(badge)}
+          </Text>
+        </View>
       ) : null}
     </Animated.View>
   );
 });
+
+// Helper to store only essential session data
+const minifySession = (session) => {
+  if (!session) return null;
+  return {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    expires_in: session.expires_in,
+    expires_at: session.expires_at,
+    token_type: session.token_type,
+    user: {
+      id: session.user?.id,
+      email: session.user?.email,
+    }
+  };
+};
 
 function AppInner() {
   const { theme, mode } = useAppTheme();
@@ -292,7 +325,7 @@ function AppInner() {
   const HeaderPulseBackground = React.useCallback(({ pulseKey }) => {
     const pulse = useSharedValue(0);
 
-    const pulseStyle = useAnimatedStyle(() => ({ 
+    const pulseStyle = useAnimatedStyle(() => ({
       opacity: pulse.value * 0.5, // Daha hafif pulse efekti
       transform: [{ scaleX: 1 + (pulse.value * 0.02) }]
     }));
@@ -301,15 +334,15 @@ function AppInner() {
       if (!pulseKey) return;
       pulse.value = 0;
       pulse.value = withSequence(
-        withTiming(1, { duration: 180 }), 
+        withTiming(1, { duration: 180 }),
         withTiming(0, { duration: 260 })
       );
     }, [pulseKey]);
 
     // Temiz ve basit header arka planı
     return (
-      <View style={{ 
-        flex: 1, 
+      <View style={{
+        flex: 1,
         backgroundColor: theme.colors.background,
       }}>
         {/* Çok hafif gradient efekti */}
@@ -322,7 +355,7 @@ function AppInner() {
           backgroundColor: theme.colors.primary,
           opacity: 0.02, // Çok hafif renk
         }} />
-        
+
         {/* Alt kenarlık çizgisi */}
         <View style={{
           position: 'absolute',
@@ -333,7 +366,7 @@ function AppInner() {
           backgroundColor: theme.colors.border,
           opacity: 0.2,
         }} />
-        
+
         {/* Pulse efekti overlay */}
         <Animated.View
           style={[
@@ -363,6 +396,9 @@ function AppInner() {
   const userId = session?.user?.id ?? null;
   const insets = useSafeAreaInsets();
 
+  const sessionRef = useRef(session);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+
   const clearStoredSession = useCallback(async () => {
     await AsyncStorage.removeItem(SESSION_KEY).catch(() => undefined);
     await SecureStore.deleteItemAsync(BIOMETRIC_SESSION_KEY).catch(() => undefined);
@@ -382,13 +418,13 @@ function AppInner() {
         if (biometricActive) {
           try {
             const biometricSession = JSON.parse(biometricSessionRaw);
-            const auth = await localAuth.authenticateAsync({ 
+            const auth = await localAuth.authenticateAsync({
               promptMessage: 'Parmak izi ile giriş yapın',
               cancelLabel: 'Vazgeç',
             });
             if (!auth.success) {
               Alert.alert(
-                '🔒 Giriş İptal Edildi', 
+                '🔒 Giriş İptal Edildi',
                 'Parmak izi doğrulaması tamamlanmadı.\n\nUygulamaya erişmek için tekrar deneyin.',
                 [{ text: 'Tamam', style: 'default' }]
               );
@@ -416,8 +452,19 @@ function AppInner() {
             await AsyncStorage.removeItem(SESSION_KEY);
           }
         } else {
+          // Supabase'in otomatik persist ettiği session'ı kontrol et
           const { data } = await supabase.auth.getSession();
-          if (isMounted) setSession(data.session ?? null);
+
+          // Eğer PIN_SESSION_KEY varsa, otomatik giriş yapma (PIN sorulmalı)
+          // AuthScreen bu key'i kontrol edip PIN ekranını gösterecek
+          const hasPinSession = await SecureStore.getItemAsync(PIN_SESSION_KEY);
+
+          if (hasPinSession) {
+            console.log('PIN session detected, skipping auto-login to enforce PIN entry.');
+            if (isMounted) setSession(null);
+          } else {
+            if (isMounted) setSession(data.session ?? null);
+          }
         }
       } catch (err) {
         console.warn('Session restore failed', err);
@@ -427,11 +474,33 @@ function AppInner() {
     };
     restoreSession();
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, currentSession) => {
-      setSession(currentSession ?? null);
-      if (!currentSession) {
+      // Önce persistence güncellemesi yap (session durumu ne olursa olsun)
+      if (currentSession) {
+        // Eğer PIN session varsa, token refresh olduğunda onu da güncelle
+        // Böylece uygulama kapatılıp açıldığında eski token yüzünden hata alınmaz
+        try {
+          const hasPinSession = await SecureStore.getItemAsync(PIN_SESSION_KEY);
+          if (hasPinSession) {
+            await SecureStore.setItemAsync(PIN_SESSION_KEY, JSON.stringify(minifySession(currentSession)));
+          }
+        } catch (err) {
+          console.warn('Failed to update PIN session on token refresh', err);
+        }
+      } else {
         await AsyncStorage.removeItem(SESSION_KEY).catch(() => undefined);
         await SecureStore.deleteItemAsync(BIOMETRIC_SESSION_KEY).catch(() => undefined);
+        // PIN session'ı silmiyoruz, çünkü PIN ile tekrar giriş yapılabilir olmalı
+        // Ancak "Çıkış Yap" butonuna basıldığında (handleSignOut) silinmeli
       }
+
+      // AuthScreen gösteriliyorken (session null iken) listener'dan session set etme
+      // AuthScreen kendi handleAuthSuccess callback'ini çağıracak
+      // Bu sayede PIN oluşturma süreci tamamlanana kadar dashboard'a geçiş engellenir
+      if (!sessionRef.current && currentSession) {
+        // AuthScreen kontrolünde - listener'ı session state'ini güncellememeli
+        return;
+      }
+      setSession(currentSession ?? null);
     });
     return () => {
       isMounted = false;
@@ -513,8 +582,19 @@ function AppInner() {
     }
 
     // Şifre sıfırlama için ResetPassword ekranına yönlendir
+    // PIN sıfırlama ise pinReset parametresini ekle
     if (type === 'recovery' || params.recovery === 'true') {
-      const nav = { screen: 'ResetPassword', params: { token: tokenForUi, email } };
+      // Her iki parametre adını da kontrol et (pinReset veya pin_reset)
+      const isPinReset = params.pinReset === 'true' || params.pin_reset === 'true';
+      const nav = {
+        screen: 'ResetPassword',
+        params: {
+          token: tokenForUi,
+          email,
+          pinReset: isPinReset
+        }
+      };
+      console.log('Deep link navigation:', nav, 'isPinReset:', isPinReset, 'params:', params);
       if (navigationRef.isReady()) navigationRef.navigate(nav.screen, nav.params);
       else setPendingNavigation(nav);
     }
@@ -720,8 +800,21 @@ function AppInner() {
     };
   }, [registerFirebaseMessaging, saveFirebaseToken, userId]);
 
+  useEffect(() => {
+    const authListener = DeviceEventEmitter.addListener('auth_success', (newSession) => {
+      handleAuthSuccess(newSession);
+    });
+    return () => authListener.remove();
+  }, []);
+
   const handleAuthSuccess = (newSession) => {
     setSession(newSession ?? null);
+
+    // Arka planda tüm ekranların verilerini önceden yükle
+    if (newSession?.user?.id) {
+      console.log('Auth Success: Starting background prefetch...');
+      prefetchAllData(newSession.user.id);
+    }
   };
 
   const handleSignOut = useCallback(async () => {
@@ -729,6 +822,13 @@ function AppInner() {
       await supabase.auth.signOut();
       await AsyncStorage.removeItem(SESSION_KEY);
       await SecureStore.deleteItemAsync(BIOMETRIC_SESSION_KEY);
+      // Sadece PIN session'ı temizle - PIN'in kendisi kullanıcıya özel key ile kalır
+      // Böylece aynı kullanıcı tekrar giriş yapınca PIN'ini kullanabilir
+      await SecureStore.deleteItemAsync(PIN_SESSION_KEY);
+
+      // Prefetch cache'ini temizle
+      await clearPrefetchCache();
+
       setSession(null);
       setExpoPushToken(null);
       setFirebaseToken(null);

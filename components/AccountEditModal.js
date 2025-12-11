@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Modal,
   StyleSheet,
@@ -10,95 +10,28 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Dimensions,
+  Keyboard,
+  Animated,
 } from 'react-native';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
-import Animated, {
-  FadeIn,
-  FadeOut,
-  SlideInDown,
-  SlideOutDown,
-} from 'react-native-reanimated';
 import { useAppTheme } from '../lib/theme';
 import { usePrefs } from '../lib/prefs';
 import { useToast } from '../lib/toast';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
-// Popüler hizmetler için önceden tanımlı ikonlar
-const SERVICE_PRESETS = [
-  // Sosyal Medya
-  { name: 'Instagram', keywords: ['instagram', 'insta', 'ig'], icon: 'instagram', color: '#E4405F' },
-  { name: 'Facebook', keywords: ['facebook', 'fb'], icon: 'facebook', color: '#1877F2' },
-  { name: 'Twitter', keywords: ['twitter', 'x'], icon: 'twitter', color: '#1DA1F2' },
-  { name: 'LinkedIn', keywords: ['linkedin', 'linked'], icon: 'linkedin', color: '#0A66C2' },
-  { name: 'TikTok', keywords: ['tiktok', 'tik'], icon: 'music-note', color: '#000000' },
-  { name: 'Snapchat', keywords: ['snapchat', 'snap'], icon: 'snapchat', color: '#FFFC00' },
-  { name: 'WhatsApp', keywords: ['whatsapp', 'whats', 'wa'], icon: 'whatsapp', color: '#25D366' },
-  { name: 'Telegram', keywords: ['telegram', 'tg'], icon: 'send', color: '#0088cc' },
-  { name: 'Discord', keywords: ['discord'], icon: 'message-text', color: '#5865F2' },
-  { name: 'Reddit', keywords: ['reddit'], icon: 'reddit', color: '#FF4500' },
-  { name: 'Pinterest', keywords: ['pinterest', 'pin'], icon: 'pinterest', color: '#E60023' },
-  { name: 'YouTube', keywords: ['youtube', 'yt'], icon: 'youtube', color: '#FF0000' },
-
-  // E-ticaret
-  { name: 'Amazon', keywords: ['amazon'], icon: 'cart', color: '#FF9900' },
-  { name: 'Trendyol', keywords: ['trendyol', 'trend'], icon: 'shopping', color: '#F27A1A' },
-  { name: 'Hepsiburada', keywords: ['hepsiburada', 'hepsi'], icon: 'cart-outline', color: '#FF6000' },
-  { name: 'eBay', keywords: ['ebay'], icon: 'tag', color: '#E53238' },
-  { name: 'AliExpress', keywords: ['aliexpress', 'ali'], icon: 'shopping-outline', color: '#FF4747' },
-  { name: 'Getir', keywords: ['getir'], icon: 'moped', color: '#5D3EBC' },
-  { name: 'Yemeksepeti', keywords: ['yemeksepeti', 'yemek'], icon: 'food', color: '#FF0000' },
-
-  // Bankacılık & Finans
-  { name: 'Garanti BBVA', keywords: ['garanti', 'bbva'], icon: 'bank', color: '#00A650' },
-  { name: 'İş Bankası', keywords: ['isbank', 'isbankasi', 'is'], icon: 'bank-outline', color: '#005DAA' },
-  { name: 'Yapı Kredi', keywords: ['yapikredi', 'yapi'], icon: 'credit-card', color: '#004F9F' },
-  { name: 'Akbank', keywords: ['akbank'], icon: 'bank-transfer', color: '#EE2E24' },
-  { name: 'Ziraat', keywords: ['ziraat'], icon: 'bank', color: '#00843D' },
-  { name: 'PayPal', keywords: ['paypal', 'pay'], icon: 'currency-usd', color: '#00457C' },
-  { name: 'Papara', keywords: ['papara'], icon: 'wallet', color: '#FF6B00' },
-
-  // Streaming
-  { name: 'Netflix', keywords: ['netflix', 'netf'], icon: 'netflix', color: '#E50914' },
-  { name: 'Spotify', keywords: ['spotify', 'spot'], icon: 'spotify', color: '#1DB954' },
-  { name: 'Disney+', keywords: ['disney', 'disneyplus'], icon: 'television', color: '#113CCF' },
-  { name: 'Apple Music', keywords: ['apple music', 'apple'], icon: 'apple', color: '#FA243C' },
-  { name: 'Amazon Prime', keywords: ['prime', 'amazon prime'], icon: 'video', color: '#00A8E1' },
-  { name: 'BluTV', keywords: ['blutv', 'blu'], icon: 'television-play', color: '#0072C6' },
-  { name: 'Exxen', keywords: ['exxen'], icon: 'television-box', color: '#FF6B00' },
-  { name: 'Gain', keywords: ['gain'], icon: 'play-circle', color: '#FF0080' },
-
-  // Email
-  { name: 'Gmail', keywords: ['gmail', 'google mail'], icon: 'gmail', color: '#EA4335' },
-  { name: 'Outlook', keywords: ['outlook', 'hotmail'], icon: 'microsoft-outlook', color: '#0078D4' },
-  { name: 'Yahoo Mail', keywords: ['yahoo', 'ymail'], icon: 'yahoo', color: '#6001D2' },
-  { name: 'ProtonMail', keywords: ['proton', 'protonmail'], icon: 'email-lock', color: '#6D4AFF' },
-
-  // Diğer
-  { name: 'Google', keywords: ['google'], icon: 'google', color: '#4285F4' },
-  { name: 'Microsoft', keywords: ['microsoft'], icon: 'microsoft', color: '#00A4EF' },
-  { name: 'Apple', keywords: ['apple', 'icloud'], icon: 'apple', color: '#000000' },
-  { name: 'GitHub', keywords: ['github', 'git'], icon: 'github', color: '#181717' },
-  { name: 'Dropbox', keywords: ['dropbox', 'drop'], icon: 'dropbox', color: '#0061FF' },
-  { name: 'Steam', keywords: ['steam'], icon: 'steam', color: '#000000' },
-  { name: 'Epic Games', keywords: ['epic', 'epicgames'], icon: 'gamepad-variant', color: '#313131' },
-];
+import { getBasisTheory } from '../lib/basisTheory';
+import { getBrandInfo, ALL_BRANDS } from '../lib/serviceIcons';
+import ServiceLogo from './ServiceLogo';
 
 // Parola gücü hesaplama
 const calculatePasswordStrength = (password) => {
   if (!password) return { strength: 0, label: '', color: '#9ca3af' };
 
   let strength = 0;
-
-  // Uzunluk kontrolü
   if (password.length >= 8) strength += 25;
   if (password.length >= 12) strength += 15;
   if (password.length >= 16) strength += 10;
-
-  // Karakter çeşitliliği
   if (/[a-z]/.test(password)) strength += 10;
   if (/[A-Z]/.test(password)) strength += 15;
   if (/[0-9]/.test(password)) strength += 15;
@@ -110,9 +43,21 @@ const calculatePasswordStrength = (password) => {
   return { strength: 100, label: 'Mükemmel', color: '#22c55e' };
 };
 
+// Get service color from ALL_BRANDS
+const getServiceColor = (serviceName) => {
+  const brand = getBrandInfo(serviceName);
+  return brand?.colors?.primary || '#667eea';
+};
+
+// Popüler hizmetler listesi - ALL_BRANDS'den otomatik oluştur
+const POPULAR_SERVICES = [
+  'netflix', 'spotify', 'youtube', 'instagram', 'twitter', 'facebook',
+  'discord', 'google', 'github', 'steam', 'tiktok', 'linkedin',
+  'apple', 'microsoft', 'amazon', 'trendyol', 'hepsiburada', 'getir'
+].map(key => ALL_BRANDS[key]).filter(Boolean);
+
 const AccountEditModal = ({ visible, account, onClose, onSave, mode = 'add' }) => {
-  const { theme, mode: themeMode } = useAppTheme();
-  const isDark = themeMode === 'dark' || (themeMode === 'system' && theme.colors.background === '#0b0b12');
+  const { theme, accent } = useAppTheme();
   const { hapticsEnabled } = usePrefs();
   const { showToast } = useToast();
 
@@ -126,26 +71,75 @@ const AccountEditModal = ({ visible, account, onClose, onSave, mode = 'add' }) =
   const [selectedPreset, setSelectedPreset] = useState(null);
   const [showPresets, setShowPresets] = useState(false);
 
+  // Marka rengi öncelikli - bulunursa markanın rengini kullan, yoksa accent veya default
+  const serviceBrandColor = getServiceColor(service);
+  const activeColor = serviceBrandColor !== '#667eea' ? serviceBrandColor : (accent || '#667eea');
+
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const keyboardHeight = useRef(new Animated.Value(0)).current;
+  const scrollViewRef = useRef(null);
+
   const passwordStrength = useMemo(() => calculatePasswordStrength(password), [password]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSubscription = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardVisible(true);
+      Animated.timing(keyboardHeight, {
+        toValue: e.endCoordinates.height,
+        duration: Platform.OS === 'ios' ? 250 : 100,
+        useNativeDriver: false,
+      }).start();
+    });
+    const hideSubscription = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      Animated.timing(keyboardHeight, {
+        toValue: 0,
+        duration: Platform.OS === 'ios' ? 250 : 100,
+        useNativeDriver: false,
+      }).start();
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [keyboardHeight]);
+
+  const handleInputFocus = (inputIndex) => {
+    setKeyboardVisible(true);
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: inputIndex * 80, animated: true });
+    }, 300);
+  };
 
   // Hizmet adına göre önerileri filtrele
   const filteredPresets = useMemo(() => {
     if (!service.trim() || mode === 'edit') return [];
-
     const searchTerm = service.toLowerCase().trim();
 
-    return SERVICE_PRESETS.filter(preset =>
-      preset.keywords.some(keyword => keyword.includes(searchTerm)) ||
-      preset.name.toLowerCase().includes(searchTerm)
-    ).slice(0, 6); // Maksimum 6 öneri göster
+    // ALL_BRANDS'den eşleşenleri bul
+    const matched = Object.values(ALL_BRANDS).filter(brand =>
+      brand.name.toLowerCase().includes(searchTerm) ||
+      brand.id.toLowerCase().includes(searchTerm) ||
+      brand.domain?.toLowerCase().includes(searchTerm)
+    ).slice(0, 6);
+
+    // Eğer eşleşen yoksa popüler servisleri göster
+    if (matched.length === 0 && searchTerm.length <= 2) {
+      return POPULAR_SERVICES.slice(0, 6);
+    }
+
+    return matched;
   }, [service, mode]);
 
   useEffect(() => {
     if (visible && account && mode === 'edit') {
       setService(account.service || '');
       setUsername(account.username_enc || '');
-      // Basis Theory entegrasyonu nedeniyle şifreyi gösteremiyoruz
-      setPassword('');
+      setPassword(''); // Şifre gösterilmez, yeniden girilmeli
       setNote(account.note || '');
       setSelectedPreset(null);
       setShowPresets(false);
@@ -155,7 +149,6 @@ const AccountEditModal = ({ visible, account, onClose, onSave, mode = 'add' }) =
   }, [visible, account, mode]);
 
   useEffect(() => {
-    // Filtrelenmiş presetler varsa göster
     setShowPresets(filteredPresets.length > 0 && mode === 'add');
   }, [filteredPresets, mode]);
 
@@ -175,13 +168,11 @@ const AccountEditModal = ({ visible, account, onClose, onSave, mode = 'add' }) =
       setError('Hizmet ve kullanıcı adı zorunludur.');
       return false;
     }
-
-    // Şifre zorunluluğunu kaldırdık çünkü mobilde şifre kaydedemiyoruz (Basis Theory)
-    // if (!password.trim()) {
-    //   setError('Parola zorunludur.');
-    //   return false;
-    // }
-
+    // Yeni hesap eklerken parola zorunlu
+    if (mode === 'add' && !password.trim()) {
+      setError('Parola zorunludur.');
+      return false;
+    }
     return true;
   };
 
@@ -194,16 +185,45 @@ const AccountEditModal = ({ visible, account, onClose, onSave, mode = 'add' }) =
     setError('');
 
     try {
+      let btTokenId = account?.bt_token_id_password;
+
+      // Parola varsa tokenize et
+      if (password.trim()) {
+        try {
+          const bt = await getBasisTheory();
+
+          // Eski token varsa sil
+          if (account?.bt_token_id_password && mode === 'edit') {
+            try {
+              await bt.tokens.delete(account.bt_token_id_password);
+            } catch (deleteErr) {
+              console.warn('Old password token deletion failed:', deleteErr);
+            }
+          }
+
+          // Yeni token oluştur
+          const token = await bt.tokens.create({
+            type: 'token',
+            data: password.trim(),
+          });
+
+          btTokenId = token.id;
+        } catch (btErr) {
+          console.error('Basis Theory password tokenization failed:', btErr);
+          throw new Error('Parola şifrelenemedi: ' + (btErr.message || 'Bilinmeyen hata'));
+        }
+      }
+
       const accountData = {
         service: service.trim(),
         username_enc: username.trim(),
-        // password_enc: password.trim(), // ARTIK GÖNDERİLMİYOR
-        // bt_token_id_password: ... // Token oluşturulamadığı için bunu da gönderemiyoruz
         note: note.trim(),
       };
 
-      if (password.trim()) {
-        showToast('Uyarı', 'Mobil uygulamada şifre kaydedilemez. Lütfen web sürümünü kullanın.');
+      // Sadece yeni parola girildiyse token ID'yi ekle
+      if (password.trim() && btTokenId) {
+        accountData.bt_token_id_password = btTokenId;
+        accountData.password_enc = '•••••••••'; // Placeholder
       }
 
       await onSave(accountData, account?.id);
@@ -234,27 +254,43 @@ const AccountEditModal = ({ visible, account, onClose, onSave, mode = 'add' }) =
   const handlePasteEmail = async () => {
     try {
       const text = await Clipboard.getStringAsync();
-
       if (text) {
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-        if (emailRegex.test(text.trim())) {
-          setUsername(text.trim());
-          showToast('Başarılı', 'E-posta yapıştırıldı');
-
-          if (hapticsEnabled) {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }
-        } else {
-          setUsername(text.trim());
-          showToast('Uyarı', 'Panodaki metin yapıştırıldı');
+        setUsername(text.trim());
+        showToast('Yapıştırıldı', 'Kullanıcı adı yapıştırıldı');
+        if (hapticsEnabled) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
-      } else {
-        showToast('Hata', 'Panoda metin bulunamadı');
       }
     } catch (error) {
-      console.log('Clipboard error:', error);
       showToast('Hata', 'Yapıştırma hatası');
+    }
+  };
+
+  const handlePastePassword = async () => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (text) {
+        setPassword(text);
+        showToast('Yapıştırıldı', 'Parola yapıştırıldı');
+        if (hapticsEnabled) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      }
+    } catch (error) {
+      showToast('Hata', 'Yapıştırma hatası');
+    }
+  };
+
+  const generatePassword = () => {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%&*';
+    let pass = '';
+    for (let i = 0; i < 16; i++) {
+      pass += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setPassword(pass);
+    showToast('Oluşturuldu', 'Güçlü parola oluşturuldu');
+    if (hapticsEnabled) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
   };
 
@@ -262,33 +298,19 @@ const AccountEditModal = ({ visible, account, onClose, onSave, mode = 'add' }) =
     setSelectedPreset(preset);
     setService(preset.name);
     setShowPresets(false);
-
     if (hapticsEnabled) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   }, [hapticsEnabled]);
 
-  const handleCopyPassword = useCallback(async () => {
-    if (password) {
-      await Clipboard.setStringAsync(password);
-      showToast('Kopyalandı', 'Parola panoya kopyalandı');
-
-      if (hapticsEnabled) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    }
-  }, [password, hapticsEnabled, showToast]);
-
-  if (!visible) return null;
+  const serviceBrand = getBrandInfo(service);
 
   return (
     <Modal
       visible={visible}
       animationType="slide"
-      presentationStyle="overFullScreen"
-      onRequestClose={handleClose}
-      statusBarTranslucent
       transparent={true}
+      onRequestClose={handleClose}
     >
       <View style={styles.modalOverlay}>
         <TouchableOpacity
@@ -296,235 +318,255 @@ const AccountEditModal = ({ visible, account, onClose, onSave, mode = 'add' }) =
           activeOpacity={1}
           onPress={handleClose}
         />
-        <View style={[styles.modalContent, { backgroundColor: isDark ? '#1c1c1e' : '#ffffff' }]}>
-          {/* Handle */}
+
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+          style={[styles.sheetContainer, { backgroundColor: theme.colors.background }]}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
+          {/* Handle Bar */}
           <View style={styles.handleContainer}>
-            <View style={[styles.sheetHandle, { backgroundColor: isDark ? '#3c3c3e' : '#d1d1d6' }]} />
+            <View style={[styles.handle, { backgroundColor: theme.dark ? '#38383A' : '#E5E5EA' }]} />
+          </View>
+
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
+              {mode === 'add' ? 'Yeni Hesap' : 'Hesabı Düzenle'}
+            </Text>
+            <TouchableOpacity
+              style={[styles.closeButton, { backgroundColor: theme.colors.surfaceElevated }]}
+              onPress={handleClose}
+            >
+              <Ionicons name="close" size={20} color={theme.colors.text} />
+            </TouchableOpacity>
           </View>
 
           <ScrollView
-            contentContainerStyle={styles.content}
+            ref={scrollViewRef}
+            contentContainerStyle={[styles.content, { paddingBottom: keyboardVisible ? 20 : 120 }]}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            style={{ flex: 1 }}
           >
-            {/* Form */}
+            {/* Live Preview Card */}
+            {!keyboardVisible && (
+              <View style={styles.previewContainer}>
+                <View style={[styles.cardPreview, { backgroundColor: activeColor, shadowColor: activeColor }]}>
+                  <LinearGradient
+                    colors={['rgba(255,255,255,0.15)', 'rgba(0,0,0,0.05)']}
+                    style={StyleSheet.absoluteFill}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  />
+
+                  {/* Decoration Circles */}
+                  <View style={[styles.decoCircle, { right: -20, top: -20, backgroundColor: 'rgba(255,255,255,0.1)' }]} />
+                  <View style={[styles.decoCircle, { left: -30, bottom: -30, width: 100, height: 100, backgroundColor: 'rgba(255,255,255,0.05)' }]} />
+
+                  <View style={styles.cardHeader}>
+                    <Text style={styles.cardService} numberOfLines={1}>
+                      {service || 'Hizmet Adı'}
+                    </Text>
+                    {/* Service Logo */}
+                    {serviceBrand ? (
+                      <ServiceLogo
+                        brand={serviceBrand}
+                        fallbackText={service?.slice(0, 2) || '?'}
+                        variant="card"
+                      />
+                    ) : (
+                      <View style={styles.logoPlaceholder}>
+                        <Ionicons name="globe-outline" size={24} color="rgba(255,255,255,0.6)" />
+                      </View>
+                    )}
+                  </View>
+
+                  <View style={styles.cardBody}>
+                    <Text style={styles.cardUsernameLabel}>KULLANICI ADI</Text>
+                    <Text style={styles.cardUsername} numberOfLines={1}>
+                      {username || 'kullanici@ornek.com'}
+                    </Text>
+                  </View>
+
+                  <View style={styles.cardFooter}>
+                    <View>
+                      <Text style={styles.cardLabelTitle}>PAROLA</Text>
+                      <Text style={styles.cardLabel}>
+                        {password ? '••••••••••' : 'Girilmedi'}
+                      </Text>
+                    </View>
+                    {password && (
+                      <View style={[styles.strengthBadge, { backgroundColor: passwordStrength.color + '30' }]}>
+                        <View style={[styles.strengthDot, { backgroundColor: passwordStrength.color }]} />
+                        <Text style={[styles.strengthText, { color: passwordStrength.color }]}>
+                          {passwordStrength.label}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Service Presets */}
+            {showPresets && (
+              <View style={[styles.presetsContainer, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}>
+                <Text style={[styles.presetsTitle, { color: theme.colors.textSecondary }]}>ÖNERİLEN HİZMETLER</Text>
+                <View style={styles.presetsGrid}>
+                  {filteredPresets.map((brand) => (
+                    <TouchableOpacity
+                      key={brand.id}
+                      style={[styles.presetChip, { backgroundColor: (brand.colors?.primary || '#667eea') + '15', borderColor: (brand.colors?.primary || '#667eea') + '30' }]}
+                      onPress={() => handleSelectPreset(brand)}
+                      activeOpacity={0.7}
+                    >
+                      <ServiceLogo
+                        brand={brand}
+                        fallbackText={brand.name?.slice(0, 2) || '?'}
+                        size="xs"
+                      />
+                      <Text style={[styles.presetChipText, { color: theme.colors.text }]}>{brand.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* Form Inputs */}
             <View style={styles.form}>
               <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
-                  Hizmet / Platform
-                </Text>
-                <TextInput
-                  style={[
-                    styles.input,
-                    {
-                      backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
-                      borderColor: isDark ? '#2c2c2e' : '#e5e5ea',
-                      color: theme.colors.text,
-                    },
-                  ]}
-                  value={service}
-                  onChangeText={setService}
-                  placeholder="örn. Netflix, Instagram, Gmail"
-                  placeholderTextColor={theme.colors.muted}
-                  autoComplete="off"
-                  autoFocus={mode === 'add'}
-                />
+                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>HESAP BİLGİLERİ</Text>
 
-                {/* Akıllı Hizmet Önerileri */}
-                {showPresets && (
-                  <Animated.View entering={FadeIn} exiting={FadeOut}>
-                    <View style={styles.presetsContainer}>
-                      <Text style={[styles.presetsTitle, { color: theme.colors.textSecondary }]}>
-                        Önerilen Hizmetler
-                      </Text>
-                      <View style={styles.presetsGrid}>
-                        {filteredPresets.map((preset) => (
-                          <TouchableOpacity
-                            key={preset.name}
-                            style={[
-                              styles.presetChip,
-                              {
-                                backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
-                                borderColor: isDark ? '#2c2c2e' : '#e5e5ea',
-                              },
-                            ]}
-                            onPress={() => handleSelectPreset(preset)}
-                            activeOpacity={0.7}
-                          >
-                            <View style={[styles.presetIconSmall, { backgroundColor: preset.color + '15' }]}>
-                              <MaterialCommunityIcons
-                                name={preset.icon}
-                                size={18}
-                                color={preset.color}
-                              />
-                            </View>
-                            <Text
-                              style={[styles.presetChipText, { color: theme.colors.text }]}
-                              numberOfLines={1}
-                            >
-                              {preset.name}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    </View>
-                  </Animated.View>
-                )}
-              </View>
-
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
-                  Kullanıcı Adı / E-posta
-                </Text>
-                <View style={styles.inputWithButton}>
+                <View style={[styles.inputContainer, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}>
+                  <View style={styles.inputIcon}>
+                    <Ionicons name="globe-outline" size={20} color={theme.colors.muted} />
+                  </View>
                   <TextInput
-                    style={[
-                      styles.input,
-                      styles.inputFlex,
-                      {
-                        backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
-                        borderColor: isDark ? '#2c2c2e' : '#e5e5ea',
-                        color: theme.colors.text,
-                      },
-                    ]}
+                    style={[styles.input, { color: theme.colors.text }]}
+                    value={service}
+                    onChangeText={setService}
+                    onFocus={() => handleInputFocus(0)}
+                    placeholder="Hizmet / Platform Adı"
+                    placeholderTextColor={theme.colors.muted}
+                  />
+                </View>
+
+                <View style={[styles.inputContainer, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}>
+                  <View style={styles.inputIcon}>
+                    <Ionicons name="person-outline" size={20} color={theme.colors.muted} />
+                  </View>
+                  <TextInput
+                    style={[styles.input, { color: theme.colors.text }]}
                     value={username}
                     onChangeText={setUsername}
-                    placeholder="kullanici@ornek.com"
+                    onFocus={() => handleInputFocus(1)}
+                    placeholder="Kullanıcı Adı / E-posta"
                     placeholderTextColor={theme.colors.muted}
                     autoCapitalize="none"
                     keyboardType="email-address"
-                    autoComplete="username"
-                    textContentType="username"
                   />
-                  <TouchableOpacity
-                    style={[
-                      styles.iconButton,
-                      {
-                        backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
-                        borderColor: isDark ? '#2c2c2e' : '#e5e5ea',
-                      }
-                    ]}
-                    onPress={handlePasteEmail}
-                    onPressIn={() => {
-                      if (hapticsEnabled) {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                    }}
-                  >
-                    <MaterialCommunityIcons name="content-paste" size={20} color={theme.colors.primary} />
+                  <TouchableOpacity onPress={handlePasteEmail} style={styles.inputAction}>
+                    <Ionicons name="clipboard-outline" size={20} color={theme.colors.primary} />
                   </TouchableOpacity>
                 </View>
-              </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
-                  Parola (Sadece Web'de Düzenlenebilir)
-                </Text>
-
-                <View style={styles.passwordContainer}>
+                <View style={[styles.inputContainer, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}>
+                  <View style={styles.inputIcon}>
+                    <Ionicons name="lock-closed-outline" size={20} color={theme.colors.muted} />
+                  </View>
                   <TextInput
-                    style={[
-                      styles.input,
-                      styles.passwordInput,
-                      {
-                        backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
-                        borderColor: isDark ? '#2c2c2e' : '#e5e5ea',
-                        color: theme.colors.textSecondary, // Disabled look
-                      },
-                    ]}
+                    style={[styles.input, { color: theme.colors.text }]}
                     value={password}
                     onChangeText={setPassword}
-                    placeholder="Mobil uygulamada şifre düzenlenemez"
+                    onFocus={() => handleInputFocus(2)}
+                    placeholder={mode === 'edit' ? 'Yeni parola' : 'Parola'}
                     placeholderTextColor={theme.colors.muted}
                     secureTextEntry={!showPassword}
-                    editable={false} // Disable editing
                   />
-                  {/* ... existing password actions ... */}
+                  <View style={styles.inputActions}>
+                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.inputAction}>
+                      <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={theme.colors.muted} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={handlePastePassword} style={styles.inputAction}>
+                      <Ionicons name="clipboard-outline" size={20} color={theme.colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={generatePassword} style={styles.inputAction}>
+                      <Ionicons name="flash-outline" size={20} color={theme.colors.warning || '#f59e0b'} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
 
-                {/* ... existing strength indicator ... */}
+                {/* Password Strength Indicator */}
+                {password.length > 0 && (
+                  <View style={styles.strengthContainer}>
+                    <View style={[styles.strengthBar, { backgroundColor: theme.colors.border }]}>
+                      <View style={[styles.strengthFill, { width: `${passwordStrength.strength}%`, backgroundColor: passwordStrength.color }]} />
+                    </View>
+                    <Text style={[styles.strengthLabel, { color: passwordStrength.color }]}>
+                      {passwordStrength.label} ({passwordStrength.strength}%)
+                    </Text>
+                  </View>
+                )}
+
+                <View style={[styles.inputContainer, styles.noteContainer, { backgroundColor: theme.colors.surfaceElevated, borderColor: theme.colors.border }]}>
+                  <View style={[styles.inputIcon, { alignSelf: 'flex-start', marginTop: 16 }]}>
+                    <Ionicons name="document-text-outline" size={20} color={theme.colors.muted} />
+                  </View>
+                  <TextInput
+                    style={[styles.input, styles.noteInput, { color: theme.colors.text }]}
+                    value={note}
+                    onChangeText={setNote}
+                    onFocus={() => handleInputFocus(3)}
+                    placeholder="Notlar (isteğe bağlı)"
+                    placeholderTextColor={theme.colors.muted}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                  />
+                </View>
               </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: theme.colors.textSecondary }]}>
-                  Notlar (İsteğe Bağlı)
-                </Text>
-                <TextInput
-                  style={[
-                    styles.input,
-                    styles.multilineInput,
-                    {
-                      backgroundColor: isDark ? '#1c1c1e' : '#ffffff',
-                      borderColor: isDark ? '#2c2c2e' : '#e5e5ea',
-                      color: theme.colors.text,
-                    },
-                  ]}
-                  value={note}
-                  onChangeText={setNote}
-                  placeholder="Bu hesap hakkında notlarınız..."
-                  placeholderTextColor={theme.colors.muted}
-                  multiline
-                  numberOfLines={4}
-                  textAlignVertical="top"
-                />
-              </View>
+              {error ? (
+                <View style={[styles.errorContainer, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+                  <Ionicons name="alert-circle" size={20} color={theme.colors.danger} />
+                  <Text style={[styles.errorText, { color: theme.colors.danger }]}>{error}</Text>
+                </View>
+              ) : null}
             </View>
 
-            {/* Info Box */}
-            <View style={[styles.infoBox, { backgroundColor: isDark ? '#1c1c1e' : '#ffffff' }]}>
-              <MaterialCommunityIcons name="shield-lock" size={20} color={theme.colors.primary} />
-              <Text style={[styles.infoText, { color: theme.colors.textSecondary }]}>
-                Hesap bilgileriniz şifrelenerek güvenli bir şekilde saklanır. Sadece siz erişebilirsiniz.
-              </Text>
-            </View>
-
-            {/* Error Message */}
-            {error ? (
-              <Animated.View
-                entering={SlideInDown}
-                exiting={SlideOutDown}
-                style={[styles.errorContainer, { backgroundColor: isDark ? '#2c1c1e' : '#fee2e2' }]}
-              >
-                <MaterialCommunityIcons name="alert-circle" size={20} color="#ef4444" />
-                <Text style={[styles.errorText, { color: '#ef4444' }]}>{error}</Text>
-              </Animated.View>
-            ) : null}
           </ScrollView>
 
-          {/* Save Button */}
-          <View style={[styles.footer, { backgroundColor: isDark ? '#1c1c1e' : '#ffffff' }]}>
-            <TouchableOpacity
-              style={[
-                styles.saveButton,
-                { backgroundColor: theme.colors.primary },
-                saving && styles.saveButtonDisabled,
-              ]}
-              onPress={handleSave}
-              disabled={saving}
-              onPressIn={() => {
-                if (hapticsEnabled) {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                }
-              }}
-              activeOpacity={0.8}
-            >
-              {saving ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <>
-                  <MaterialCommunityIcons
-                    name={mode === 'add' ? 'check-circle' : 'content-save'}
-                    size={24}
-                    color="#FFFFFF"
-                  />
+          {/* Footer Action */}
+          {!keyboardVisible && (
+            <View style={[
+              styles.footer,
+              {
+                backgroundColor: theme.colors.background,
+                borderTopColor: theme.colors.border,
+              }
+            ]}>
+              <TouchableOpacity
+                style={[
+                  styles.saveButton,
+                  { backgroundColor: activeColor, shadowColor: activeColor },
+                  saving && styles.saveButtonDisabled,
+                ]}
+                onPress={handleSave}
+                disabled={saving}
+                activeOpacity={0.8}
+              >
+                {saving ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
                   <Text style={styles.saveButtonText}>
-                    {mode === 'add' ? 'Hesap Ekle' : 'Değişiklikleri Kaydet'}
+                    {mode === 'add' ? 'Ekle' : 'Kaydet'}
                   </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
@@ -534,83 +576,175 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
   },
   backdrop: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
   },
-  modalContent: {
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    maxHeight: '95%',
+  sheetContainer: {
+    marginTop: 60,
+    flex: 1,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 20,
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 24,
   },
   handleContainer: {
-    paddingTop: 12,
-    paddingBottom: 12,
     alignItems: 'center',
+    paddingTop: 12,
+    paddingBottom: 8,
   },
-  sheetHandle: {
-    width: 36,
+  handle: {
+    width: 40,
     height: 4,
-    borderRadius: 2.5,
+    borderRadius: 2,
+    opacity: 0.5,
   },
-  container: {
-    flex: 1,
-  },
-  content: {
-    padding: 20,
-    gap: 24,
-    paddingBottom: 40,
-  },
-  form: {
-    gap: 20,
-  },
-  inputGroup: {
-    gap: 8,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  input: {
-    height: 52,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  inputFlex: {
-    flex: 1,
-  },
-  inputWithButton: {
+  header: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingBottom: 24,
+    paddingTop: 12,
   },
-  iconButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 12,
-    borderWidth: 1.5,
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+  },
+  closeButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  content: {
+    padding: 20,
+  },
+  previewContainer: {
+    marginBottom: 24,
+    alignItems: 'center',
+  },
+  cardPreview: {
+    width: '100%',
+    height: 190,
+    borderRadius: 24,
+    padding: 24,
+    justifyContent: 'space-between',
+    overflow: 'hidden',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  decoCircle: {
+    position: 'absolute',
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  cardService: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
+    opacity: 0.95,
+    flex: 1,
+    marginRight: 10,
+  },
+  logoContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  logoPlaceholder: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardBody: {
+    justifyContent: 'center',
+  },
+  cardUsernameLabel: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+    opacity: 0.6,
+    marginBottom: 4,
+  },
+  cardUsername: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+  },
+  cardLabelTitle: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '700',
+    opacity: 0.6,
+    marginBottom: 2,
+  },
+  cardLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  strengthBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    gap: 6,
+  },
+  strengthDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  strengthText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   presetsContainer: {
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 24,
+    borderWidth: 1,
     gap: 12,
-    marginTop: 8,
   },
   presetsTitle: {
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.5,
-    textTransform: 'uppercase',
   },
   presetsGrid: {
     flexDirection: 'row',
@@ -620,86 +754,86 @@ const styles = StyleSheet.create({
   presetChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1.5,
-  },
-  presetIconSmall: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
   },
   presetChipText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
-  passwordContainer: {
-    position: 'relative',
+  form: {
+    gap: 24,
   },
-  passwordInput: {
-    paddingRight: 90,
+  inputGroup: {
+    gap: 16,
   },
-  passwordActions: {
-    position: 'absolute',
-    right: 12,
-    top: 16,
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  inputContainer: {
     flexDirection: 'row',
-    gap: 8,
+    alignItems: 'center',
+    height: 56,
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingHorizontal: 16,
   },
-  passwordActionButton: {
-    padding: 4,
+  noteContainer: {
+    height: 100,
+    alignItems: 'flex-start',
+  },
+  inputIcon: {
+    width: 24,
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  input: {
+    flex: 1,
+    height: '100%',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  noteInput: {
+    paddingTop: 16,
+    paddingBottom: 16,
+    textAlignVertical: 'top',
+  },
+  inputAction: {
+    padding: 8,
+  },
+  inputActions: {
+    flexDirection: 'row',
+    gap: 4,
   },
   strengthContainer: {
-    gap: 8,
+    gap: 6,
+    marginTop: -8,
   },
   strengthBar: {
-    height: 6,
-    backgroundColor: 'rgba(128,128,128,0.2)',
-    borderRadius: 3,
+    height: 4,
+    borderRadius: 2,
     overflow: 'hidden',
   },
   strengthFill: {
     height: '100%',
-    borderRadius: 3,
-  },
-  strengthLabelContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingBottom: 4,
+    borderRadius: 2,
   },
   strengthLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-  },
-  multilineInput: {
-    height: 100,
-    paddingTop: 16,
-    paddingBottom: 16,
-  },
-  infoBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: 16,
-    borderRadius: 12,
-    gap: 12,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '500',
   },
   errorContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    borderRadius: 12,
-    gap: 12,
+    borderRadius: 16,
+    gap: 10,
   },
   errorText: {
     flex: 1,
@@ -707,19 +841,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   footer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     padding: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    paddingBottom: 34,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   saveButton: {
-    flexDirection: 'row',
+    height: 56,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 14,
-    gap: 10,
-    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
   },
@@ -730,7 +866,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 17,
     fontWeight: '700',
-    letterSpacing: 0.3,
   },
 });
 

@@ -1,0 +1,24 @@
+name: Check Reminders
+
+on:
+  schedule:
+    # Her dakika çalışır (GitHub Actions en az 5 dakika destekliyor ama genelde 1 dakikada çalışır)
+    - cron: '* * * * *'
+  workflow_dispatch: # Manuel tetikleme için
+
+jobs:
+  check-reminders:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Call Supabase Edge Function
+        run: |
+          curl -X POST \
+            'https://jpjgagpmtkuhdvvjqntd.supabase.co/functions/v1/check-reminders' \
+            -H 'Content-Type: application/json' \
+            -H 'Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}' \
+            --fail-with-body \
+            --silent \
+            --show-error
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}

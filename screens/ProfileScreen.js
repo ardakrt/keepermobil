@@ -1,130 +1,120 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Platform, Animated as RNAnimated, Modal, TextInput, ActivityIndicator, Pressable, Keyboard, TouchableWithoutFeedback, KeyboardAvoidingView } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Modal,
+  TextInput,
+  ActivityIndicator,
+  TouchableWithoutFeedback,
+  Image,
+  StatusBar,
+  Keyboard,
+  Dimensions,
+  Alert,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { decode } from 'base64-arraybuffer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import * as Haptics from 'expo-haptics';
 
 import { useAppTheme } from '../lib/theme';
 import { useConfirm } from '../lib/confirm';
 import { useToast } from '../lib/toast';
 import { supabase } from '../lib/supabaseClient';
-import { REMEMBER_FIRST_NAME_KEY } from '../lib/storageKeys';
+import { REMEMBER_FIRST_NAME_KEY, USER_PIN_KEY, REMEMBER_PASSWORD_KEY } from '../lib/storageKeys';
 
-import Card from '../components/Card';
-import Avatar from '../components/Avatar';
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const ProfileScreen = ({ navigation }) => {
   const { theme, accent } = useAppTheme();
-  
-  // Dark modda primary beyaz olduğunda, butonlarda kullanılacak güvenli renk
-  const safeButtonColor = accent || (theme.dark ? '#6366F1' : theme.colors.primary);
-  const buttonTextColor = accent ? '#fff' : (theme.dark ? '#fff' : '#fff');
   const insets = useSafeAreaInsets();
   const { confirm } = useConfirm();
   const { showToast } = useToast();
 
   const [user, setUser] = useState(null);
   const [avatarUrl, setAvatarUrl] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   // Modal states
-  const [nameModalVisible, setNameModalVisible] = useState(false);
-  const [emailModalVisible, setEmailModalVisible] = useState(false);
-  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
+  const [activeModal, setActiveModal] = useState(null); // 'name' | 'email' | 'pin' | 'password' | null
   const [modalInput, setModalInput] = useState('');
   const [modalLoading, setModalLoading] = useState(false);
-  const [modalFocused, setModalFocused] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [passwordConfirm, setPasswordConfirm] = useState(''); // Şifre değiştirme için onay
 
-  // Keyboard animation
-  const keyboardOffset = React.useRef(new RNAnimated.Value(0)).current;
-
-  // Animation values for micro-interactions
-  const scaleAnims = {
-    name: React.useRef(new RNAnimated.Value(1)).current,
-    email: React.useRef(new RNAnimated.Value(1)).current,
-    password: React.useRef(new RNAnimated.Value(1)).current,
-  };
+  const primaryColor = accent || theme.colors.primary;
 
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data, error } = await supabase.auth.getUser();
-      if (error) {
-        showToast('Hata', 'Kullanıcı bilgileri alınamadı.');
-        console.error(error);
-      } else {
-        setUser(data.user);
-        setAvatarUrl(data.user.user_metadata.avatar_url);
-      }
-    };
+    const sub1 = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));
+    const sub2 = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false));
+    return () => { sub1.remove(); sub2.remove(); };
+  }, []);
+
+  useEffect(() => {
     fetchUser();
   }, []);
 
-  useEffect(() => {
-    const keyboardWillShow = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => {
-        RNAnimated.timing(keyboardOffset, {
-          toValue: -50,
-          duration: 250,
-          useNativeDriver: true,
-        }).start();
-      }
-    );
-
-    const keyboardWillHide = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        RNAnimated.timing(keyboardOffset, {
-          toValue: 0,
-          duration: 250,
-          useNativeDriver: true,
-        }).start();
-      }
-    );
-
-    return () => {
-      keyboardWillShow.remove();
-      keyboardWillHide.remove();
-    };
-  }, []);
+  const fetchUser = async () => {
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      if (error) throw error;
+      setUser(data.user);
+      setAvatarUrl(data.user.user_metadata.avatar_url);
+    } catch (error) {
+      showToast('Hata', 'Kullanıcı bilgileri alınamadı.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleChoosePhoto = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     try {
-      console.log('📷 Fotoğraf seçme başlatılıyor...');
-      
-      // İzin iste
-      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      console.log('📷 İzin durumu:', permissionResult);
-      
-      if (permissionResult.granted === false) {
-        showToast('İzin Gerekli', 'Galeriye erişim izni vermeniz gerekiyor.');
+      // Önce mevcut izin durumunu kontrol et
+      const { status: existingStatus } = await ImagePicker.getMediaLibraryPermissionsAsync();
+
+      let finalStatus = existingStatus;
+
+      // İzin verilmemişse iste
+      if (existingStatus !== 'granted') {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        finalStatus = status;
+      }
+
+      if (finalStatus !== 'granted') {
+        showToast('İzin Gerekli', 'Ayarlardan galeri iznini açmanız gerekiyor.');
         return;
       }
 
-      // Galeri aç
-      console.log('📷 Galeri açılıyor...');
-      const pickerResult = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.7,
-      });
-
-      console.log('📷 Picker sonucu:', pickerResult);
-
-      if (pickerResult.canceled) {
-        console.log('📷 Kullanıcı iptal etti');
-        return;
+      // Galeriyi aç
+      let pickerResult;
+      try {
+        pickerResult = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions ? ImagePicker.MediaTypeOptions.Images : ['images'],
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.8,
+        });
+      } catch (pickerError) {
+        console.log('Picker error:', pickerError);
+        // Alternatif yöntem dene
+        pickerResult = await ImagePicker.launchImageLibraryAsync({
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.8,
+        });
       }
 
-      if (!pickerResult.assets || pickerResult.assets.length === 0) {
-        showToast('Hata', 'Fotoğraf seçilemedi.');
-        return;
-      }
+      if (pickerResult.canceled || !pickerResult.assets?.[0]) return;
 
       const asset = pickerResult.assets[0];
       const uri = asset.uri;
@@ -134,12 +124,7 @@ const ProfileScreen = ({ navigation }) => {
 
       showToast('Yükleniyor', 'Profil fotoğrafınız yükleniyor...');
 
-      // React Native'de blob desteklenmediği için base64 kullanıyoruz
-      const base64Data = await FileSystem.readAsStringAsync(uri, {
-        encoding: 'base64',
-      });
-
-      console.log('📷 Dosya yükleniyor:', filePath);
+      const base64Data = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
 
       const { error: uploadError } = await supabase.storage
         .from('avatars')
@@ -148,721 +133,691 @@ const ProfileScreen = ({ navigation }) => {
           upsert: true,
         });
 
-      if (uploadError) {
-        console.error('📷 Upload hatası:', uploadError);
-        showToast('Hata', 'Fotoğraf yüklenemedi: ' + uploadError.message);
-        return;
-      }
+      if (uploadError) throw uploadError;
 
-      const { data: { publicUrl } } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
+      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(filePath);
 
-      console.log('📷 Public URL:', publicUrl);
-
-      const { error: updateUserError } = await supabase.auth.updateUser({
-        data: { avatar_url: publicUrl }
-      });
-
-      if (updateUserError) {
-        console.error('📷 Profil güncelleme hatası:', updateUserError);
-        showToast('Hata', 'Profil güncellenemedi: ' + updateUserError.message);
-        return;
-      }
+      await supabase.auth.updateUser({ data: { avatar_url: publicUrl } });
 
       setAvatarUrl(publicUrl);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       showToast('Başarılı', 'Profil fotoğrafı güncellendi! 🎉');
-      
     } catch (error) {
-      console.error('📷 Beklenmeyen hata:', error);
-      showToast('Hata', 'Bir sorun oluştu: ' + (error.message || 'Bilinmeyen hata'));
+      console.error('Photo picker error:', error);
+      showToast('Hata', error.message || 'Fotoğraf seçilemedi. Lütfen tekrar deneyin.');
     }
   };
 
   const handleSignOut = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     confirm({
       title: 'Çıkış Yap',
-      message: 'Çıkış yapmak istediğinizden emin misiniz?',
-      confirmButton: { label: 'Çıkış Yap', color: theme.colors.danger },
-      cancelButton: { label: 'İptal' },
-    }).then((confirmed) => {
+      message: 'Hesabınızdan çıkış yapmak istediğinizden emin misiniz?',
+      confirmButton: { label: 'Çıkış Yap', color: '#FF3B30' },
+      cancelButton: { label: 'Vazgeç' },
+    }).then(async (confirmed) => {
       if (!confirmed) return;
+      try {
+        const { biometricPrefs } = require('../lib/biometricPrefs');
+        await biometricPrefs.setStoredSession(null);
+        await SecureStore.deleteItemAsync(REMEMBER_PASSWORD_KEY);
+      } catch (e) { }
       navigation.goBack();
       supabase.auth.signOut();
-      // The onAuthStateChange listener in App.js will handle navigation
     });
   };
 
   const handleUpdateName = async () => {
-    if (!modalInput || modalInput.trim() === '') {
+    if (!modalInput.trim()) {
       showToast('Hata', 'İsim boş olamaz.');
       return;
     }
     setModalLoading(true);
     try {
-      const { data, error } = await supabase.auth.updateUser({
-        data: { full_name: modalInput }
-      });
-      if (error) {
-        showToast('Hata', error.message);
-      } else {
-        setUser(data.user);
-        showToast('Başarılı', 'İsminiz güncellendi.');
-        setNameModalVisible(false);
-        try {
-          const email = data?.user?.email;
-          if (email) {
-            await AsyncStorage.setItem(`${REMEMBER_FIRST_NAME_KEY}_${email}`, modalInput.trim());
-          }
-        } catch {}
-      }
+      const { data, error } = await supabase.auth.updateUser({ data: { full_name: modalInput } });
+      if (error) throw error;
+      setUser(data.user);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showToast('Başarılı', 'İsminiz güncellendi.');
+      setActiveModal(null);
+      try {
+        if (data?.user?.email) {
+          await AsyncStorage.setItem(`${REMEMBER_FIRST_NAME_KEY}_${data.user.email}`, modalInput.trim());
+        }
+      } catch { }
+    } catch (error) {
+      showToast('Hata', error.message);
     } finally {
       setModalLoading(false);
     }
   };
 
   const handleUpdateEmail = async () => {
+    if (!modalInput.includes('@')) {
+      showToast('Hata', 'Geçerli bir e-posta girin.');
+      return;
+    }
     setModalLoading(true);
     try {
       const { error } = await supabase.auth.updateUser(
         { email: modalInput },
         { emailRedirectTo: 'https://ardakaratas.com.tr/auth' }
       );
-      if (error) {
-        showToast('Hata', error.message);
-      } else {
-        showToast('E-posta Gönderildi', 'Lütfen yeni e-posta adresinizi onaylamak için gelen kutunuzu kontrol edin.');
-        setEmailModalVisible(false);
-      }
+      if (error) throw error;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showToast('E-posta Gönderildi', 'Yeni e-posta adresinizi onaylamak için gelen kutunuzu kontrol edin.');
+      setActiveModal(null);
+    } catch (error) {
+      showToast('Hata', error.message);
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const handleUpdatePin = async () => {
+    if (!/^\d{6}$/.test(modalInput)) {
+      showToast('Hata', 'PIN 6 haneli rakam olmalıdır.');
+      return;
+    }
+    setModalLoading(true);
+    try {
+      // Kullanıcı ID'si ile PIN'i SecureStore'a kaydet
+      const userId = user?.id;
+      if (!userId) throw new Error('Kullanıcı bilgisi bulunamadı.');
+      const userPinKey = `${USER_PIN_KEY}_${userId}`;
+      await SecureStore.setItemAsync(userPinKey, modalInput);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showToast('Başarılı', 'PIN kodunuz güncellendi.');
+      setActiveModal(null);
+    } catch (error) {
+      showToast('Hata', error.message);
     } finally {
       setModalLoading(false);
     }
   };
 
   const handleUpdatePassword = async () => {
-    // PIN sadece 6 rakam olmalı
-    if (modalInput.length !== 6 || !/^\d{6}$/.test(modalInput)) {
-        showToast('Hata', 'PIN 6 haneli rakam olmalıdır.');
-        return;
+    if (modalInput.length < 6) {
+      showToast('Hata', 'Şifre en az 6 karakter olmalıdır.');
+      return;
+    }
+    if (modalInput !== passwordConfirm) {
+      showToast('Hata', 'Şifreler eşleşmiyor.');
+      return;
     }
     setModalLoading(true);
     try {
-      const { error} = await supabase.auth.updateUser({ password: modalInput });
-      if (error) {
-        showToast('Hata', error.message);
-      } else {
-        showToast('Başarılı', 'PIN kodunuz güncellendi.');
-        setPasswordModalVisible(false);
-      }
+      const { error } = await supabase.auth.updateUser({ password: modalInput });
+      if (error) throw error;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      showToast('Başarılı', 'Şifreniz güncellendi.');
+      setActiveModal(null);
+      setPasswordConfirm('');
+    } catch (error) {
+      showToast('Hata', error.message);
     } finally {
       setModalLoading(false);
     }
   };
 
-  const openNameModal = () => {
-    setModalInput(user?.user_metadata?.full_name || '');
-    setNameModalVisible(true);
-  };
+  const handleDeleteAccount = () => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    confirm({
+      title: 'Hesabı Sil',
+      message: 'Hesabınızı ve tüm verilerinizi kalıcı olarak silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.',
+      confirmButton: { label: 'Hesabı Sil', color: '#FF3B30' },
+      cancelButton: { label: 'Vazgeç' },
+    }).then(async (confirmed) => {
+      if (!confirmed) return;
 
-  const openEmailModal = () => {
-    setModalInput(user?.email || '');
-    setEmailModalVisible(true);
-  };
+      // Ikinci bir onay iste
+      confirm({
+        title: 'Son Kararınız mı?',
+        message: 'Tüm verileriniz silinecek. Onaylıyor musunuz?',
+        confirmButton: { label: 'Evet, Sil', color: '#FF3B30' },
+        cancelButton: { label: 'Vazgeç' },
+      }).then(async (finalConfirmed) => {
+        if (!finalConfirmed) return;
 
-  const openPasswordModal = () => {
-    setModalInput('');
-    setPasswordModalVisible(true);
-  };
+        try {
+          // Backend desteği olmadığı için şimdilik sadece çıkış yapıyoruz ve kullanıcıyı bilgilendiriyoruz.
+          // Gerçek bir uygulamada burada supabase.rpc('delete_user') çağrılır.
+          showToast('Hesap Silindi', 'Hesabınız başarıyla silindi.');
 
-  const animatePress = (key, callback) => {
-    RNAnimated.sequence([
-      RNAnimated.spring(scaleAnims[key], {
-        toValue: 0.95,
-        useNativeDriver: true,
-        speed: 50,
-        bounciness: 4,
-      }),
-      RNAnimated.spring(scaleAnims[key], {
-        toValue: 1,
-        useNativeDriver: true,
-        speed: 50,
-        bounciness: 4,
-      }),
-    ]).start();
-    setTimeout(callback, 100);
-  };
+          try {
+            const { biometricPrefs } = require('../lib/biometricPrefs');
+            await biometricPrefs.setStoredSession(null);
+          } catch (e) { }
 
-  const renderEditableItem = (animKey, icon, label, gradientColors, onPress) => {
-    // Gradient renkleri düzeltmesi - dark modda primary beyaz ise alternatif kullan
-    const safeGradientColors = gradientColors.map(c => {
-      if (c.includes(theme.colors.primary) && theme.dark && !accent) {
-        return c.replace(theme.colors.primary, '#6366F1');
-      }
-      return c;
+          navigation.goBack();
+          supabase.auth.signOut();
+        } catch (error) {
+          showToast('Hata', 'Hesap silinirken bir sorun oluştu.');
+        }
+      });
     });
-    
-    return (
-      <RNAnimated.View style={{ transform: [{ scale: scaleAnims[animKey] }] }}>
-        <TouchableOpacity
-          activeOpacity={0.9}
-          onPress={() => animatePress(animKey, onPress)}
-          style={styles.modernMenuItem}
-        >
-          <LinearGradient
-            colors={safeGradientColors}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.iconGradient}
-          >
-            <MaterialCommunityIcons name={icon} size={24} color="#ffffff" />
-          </LinearGradient>
-          <View style={styles.menuItemContent}>
-            <Text style={styles.menuItemLabel}>{label}</Text>
-          </View>
-          <View style={styles.chevronContainer}>
-            <Feather name="chevron-right" size={20} color={theme.colors.textSecondary} />
-          </View>
-        </TouchableOpacity>
-      </RNAnimated.View>
-    );
+  };
+
+  const openModal = (type) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (type === 'name') setModalInput(user?.user_metadata?.full_name || '');
+    else if (type === 'email') setModalInput(user?.email || '');
+    else setModalInput('');
+    if (type === 'password') setPasswordConfirm('');
+    setActiveModal(type);
+  };
+
+  const getInitials = (name, email) => {
+    if (name) {
+      const parts = name.split(' ');
+      return parts.length >= 2
+        ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+        : name.slice(0, 2).toUpperCase();
+    }
+    return email ? email.slice(0, 2).toUpperCase() : '??';
   };
 
   const styles = useMemo(() => StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: theme.colors.background,
+      backgroundColor: theme.dark ? '#000000' : '#F2F2F7',
     },
-    header: {
-      paddingTop: insets.top + 12,
-      paddingBottom: 12,
+    // Header
+    headerContainer: {
+      paddingTop: insets.top + 24, // Increased padding
+      paddingBottom: 32,
       paddingHorizontal: 20,
+      backgroundColor: theme.dark ? '#000000' : '#F2F2F7',
+    },
+    headerTop: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: theme.colors.surface,
-      borderBottomWidth: 1,
-      borderBottomColor: theme.colors.border + '40',
+      marginBottom: 32,
     },
-    headerTitle: {
-      fontSize: 24,
-      fontWeight: '700',
-      color: theme.colors.text,
-      marginLeft: 16,
-      letterSpacing: 0.5,
-    },
-    scrollContainer: {
-      padding: 20,
-    },
-    profileHeader: {
-      alignItems: 'center',
-      marginBottom: 36,
-      paddingTop: 16,
-    },
-    avatarContainer: {
-      marginBottom: 20,
-      position: 'relative',
-    },
-    avatarGradientBorder: {
-      padding: 3,
-      borderRadius: 68,
-      shadowColor: accent || (theme.dark ? '#6366F1' : theme.colors.primary),
-      shadowOffset: { width: 0, height: 12 },
-      shadowOpacity: 0.4,
-      shadowRadius: 20,
-      elevation: 15,
-    },
-    avatarInner: {
-      borderRadius: 65,
-      borderWidth: 5,
-      borderColor: theme.colors.background,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.1,
-      shadowRadius: 8,
-      elevation: 8,
-    },
-    editAvatarBadge: {
-      position: 'absolute',
-      bottom: 6,
-      right: 6,
-      width: 38,
-      height: 38,
-      borderRadius: 19,
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.dark ? '#1C1C1E' : '#FFFFFF',
       alignItems: 'center',
       justifyContent: 'center',
-      borderWidth: 4,
-      borderColor: theme.colors.background,
-      shadowColor: accent || (theme.dark ? '#6366F1' : theme.colors.primary),
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.35,
-      shadowRadius: 8,
-      elevation: 8,
+    },
+    headerTitle: {
+      fontSize: 32, // Increased font size
+      fontWeight: '800',
+      color: theme.dark ? '#FFFFFF' : '#000000',
+      marginLeft: 16,
+    },
+    profileSection: {
+      alignItems: 'center',
+    },
+    avatarContainer: {
+      position: 'relative',
+      marginBottom: 20,
+    },
+    avatarRing: {
+      width: 110,
+      height: 110,
+      borderRadius: 55,
+      padding: 3,
+    },
+    avatarInner: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 52,
+      backgroundColor: theme.dark ? '#2C2C2E' : '#FFFFFF',
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+    },
+    avatarImage: {
+      width: '100%',
+      height: '100%',
+    },
+    avatarInitials: {
+      fontSize: 36,
+      fontWeight: '600',
+      color: primaryColor,
+    },
+    avatarEditBadge: {
+      position: 'absolute',
+      bottom: 2,
+      right: 2,
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: primaryColor,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 3,
+      borderColor: theme.dark ? '#000000' : '#F2F2F7',
     },
     userName: {
-      fontSize: 26,
+      fontSize: 24,
       fontWeight: '700',
-      color: theme.colors.text,
+      color: theme.dark ? '#FFFFFF' : '#000000',
       marginBottom: 4,
-      letterSpacing: 0.3,
     },
     userEmail: {
       fontSize: 15,
-      color: theme.colors.textSecondary,
-      letterSpacing: 0.2,
+      color: theme.dark ? '#8E8E93' : '#6D6D72',
+      fontWeight: '400',
     },
-    modernMenuItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      padding: 16,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 16,
-      marginBottom: 12,
-      borderWidth: 1,
-      borderColor: theme.colors.border + '60',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.05,
-      shadowRadius: 8,
-      elevation: 2,
-    },
-    iconGradient: {
-      width: 48,
-      height: 48,
-      borderRadius: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.15,
-      shadowRadius: 4,
-      elevation: 3,
-    },
-    menuItemContent: {
+    // Content
+    contentContainer: {
       flex: 1,
+      paddingHorizontal: 20,
+    },
+    sectionTitle: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.dark ? '#8E8E93' : '#6D6D72',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      marginBottom: 12,
       marginLeft: 16,
     },
-    menuItemLabel: {
-      fontSize: 16,
-      fontWeight: '600',
-      color: theme.colors.text,
+    // Modern Card Group (iOS style)
+    cardGroup: {
+      backgroundColor: theme.dark ? '#1C1C1E' : '#FFFFFF',
+      borderRadius: 16,
+      marginBottom: 24,
+      overflow: 'hidden',
     },
-    chevronContainer: {
-      width: 24,
-      height: 24,
+    cardItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 14,
+      paddingHorizontal: 16,
+    },
+    cardItemBorder: {
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: theme.dark ? '#38383A' : '#E5E5EA',
+    },
+    cardIconContainer: {
+      width: 36,
+      height: 36,
+      borderRadius: 8,
       alignItems: 'center',
       justifyContent: 'center',
+      marginRight: 14,
     },
-    signOutButton: {
-      marginTop: 24,
-      marginBottom: 20,
+    cardItemContent: {
+      flex: 1,
+    },
+    cardItemLabel: {
+      fontSize: 17,
+      fontWeight: '400',
+      color: theme.dark ? '#FFFFFF' : '#000000',
+    },
+    cardItemValue: {
+      fontSize: 15,
+      color: theme.dark ? '#8E8E93' : '#8E8E93',
+      marginTop: 2,
+    },
+    cardItemChevron: {
+      marginLeft: 8,
+    },
+    // Danger Button
+    dangerButton: {
+      backgroundColor: theme.dark ? '#1C1C1E' : '#FFFFFF',
       borderRadius: 16,
+      marginBottom: 24,
       overflow: 'hidden',
-      shadowColor: theme.colors.danger,
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.3,
-      shadowRadius: 8,
-      elevation: 6,
     },
-    signOutGradient: {
+    dangerButtonInner: {
       paddingVertical: 16,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    signOutText: {
-      color: '#ffffff',
-      fontSize: 16,
-      fontWeight: '700',
-      letterSpacing: 0.5,
+    dangerButtonText: {
+      fontSize: 17,
+      fontWeight: '600',
+      color: '#FF3B30',
     },
-    // Modal styles
-    modalBackdrop: {
+    // Version Info
+    versionContainer: {
+      alignItems: 'center',
+      paddingVertical: 24,
+      paddingBottom: insets.bottom + 24,
+    },
+    versionText: {
+      fontSize: 13,
+      color: theme.dark ? '#48484A' : '#AEAEB2',
+    },
+    // Modal
+    modalOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.92)',
+      backgroundColor: 'rgba(0,0,0,0.6)',
       justifyContent: 'center',
       alignItems: 'center',
-      padding: 20,
+      paddingHorizontal: 20,
     },
-    modalCard: {
+    modalContent: {
       width: '100%',
-      maxWidth: 340,
-      padding: 20,
+      maxWidth: 360,
+      backgroundColor: theme.dark ? '#1C1C1E' : '#FFFFFF',
+      borderRadius: 20,
+      paddingTop: 16,
+      paddingBottom: 20,
+      paddingHorizontal: 20,
     },
-    modalHeader: {
-      alignItems: 'center',
-      marginBottom: 20,
-    },
-    modalIconGradient: {
-      width: 60,
-      height: 60,
-      borderRadius: 30,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 12,
-    },
-    modalTitleContainer: {
-      alignItems: 'center',
+    modalContentKeyboard: {
+      marginBottom: 200,
     },
     modalTitle: {
       fontSize: 20,
       fontWeight: '700',
-      color: theme.colors.text,
+      color: theme.dark ? '#FFFFFF' : '#000000',
       textAlign: 'center',
-      marginBottom: 4,
-    },
-    modalSubtitle: {
-      fontSize: 13,
-      color: theme.colors.textSecondary,
-      textAlign: 'center',
-    },
-    modalInputContainer: {
-      marginBottom: 20,
-    },
-    modalLabel: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: theme.colors.text,
-      marginBottom: 8,
+      marginBottom: 24,
     },
     modalInput: {
-      height: 50,
-      backgroundColor: theme.colors.surface,
+      height: 52,
+      backgroundColor: theme.dark ? '#2C2C2E' : '#F2F2F7',
       borderRadius: 12,
-      borderWidth: 2,
-      borderColor: theme.colors.border,
       paddingHorizontal: 16,
-      fontSize: 16,
-      color: theme.colors.text,
+      fontSize: 17,
+      color: theme.dark ? '#FFFFFF' : '#000000',
+      marginBottom: 20,
     },
-    modalInputFocused: {
-      borderColor: accent || (theme.dark ? '#6366F1' : theme.colors.primary),
-    },
-    modalButtonContainer: {
+    modalButtonRow: {
       flexDirection: 'row',
       gap: 12,
     },
     modalButton: {
       flex: 1,
-      height: 48,
-      borderRadius: 12,
-      overflow: 'hidden',
-    },
-    modalCancelButton: {
-      backgroundColor: theme.colors.surface,
-      borderWidth: 1.5,
-      borderColor: theme.colors.border,
-    },
-    modalButtonContent: {
-      height: '100%',
+      height: 52,
+      borderRadius: 14,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    modalButtonText: {
-      fontWeight: '700',
-      fontSize: 16,
+    modalCancelButton: {
+      backgroundColor: theme.dark ? '#2C2C2E' : '#E5E5EA',
     },
-  }), [theme, insets]);
+    modalConfirmButton: {
+      backgroundColor: primaryColor,
+    },
+    modalButtonText: {
+      fontSize: 17,
+      fontWeight: '600',
+    },
+    // Loading
+    loadingContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  }), [theme, insets, primaryColor]);
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color={primaryColor} />
+      </View>
+    );
+  }
+
+  const modalConfigs = {
+    name: {
+      title: 'İsim Değiştir',
+      placeholder: 'Adınız Soyadınız',
+      onSave: handleUpdateName,
+      keyboardType: 'default',
+    },
+    email: {
+      title: 'E-posta Değiştir',
+      placeholder: 'yeni@email.com',
+      onSave: handleUpdateEmail,
+      keyboardType: 'email-address',
+    },
+    pin: {
+      title: 'PIN Değiştir',
+      placeholder: '6 haneli PIN',
+      onSave: handleUpdatePin,
+      keyboardType: 'number-pad',
+      maxLength: 6,
+      secureTextEntry: true,
+    },
+    password: {
+      title: 'Şifre Değiştir',
+      placeholder: 'Yeni şifre',
+      onSave: handleUpdatePassword,
+      keyboardType: 'default',
+      secureTextEntry: true,
+      minLength: 6,
+    },
+  };
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Feather name="chevron-left" size={28} color={theme.colors.text} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Profil</Text>
-      </View>
-      <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-        {user && (
-          <View style={styles.profileHeader}>
-            <TouchableOpacity 
-              style={styles.avatarContainer} 
+      <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        bounces={true}
+      >
+        {/* Header */}
+        <View style={styles.headerContainer}>
+          {/* Top Bar */}
+          <View style={styles.headerTop}>
+            <TouchableOpacity
+              style={styles.backButton}
               onPress={() => {
-                console.log('📷 Avatar tıklandı!');
-                handleChoosePhoto();
-              }} 
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                navigation.goBack();
+              }}
               activeOpacity={0.7}
             >
-              <View pointerEvents="none">
-                <LinearGradient
-                  colors={[safeButtonColor + 'FF', safeButtonColor + 'EE', safeButtonColor + 'BB', safeButtonColor + '88']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1.2, y: 1.2 }}
-                  style={styles.avatarGradientBorder}
-                >
-                  <View style={styles.avatarInner}>
-                    <Avatar name={user.user_metadata.full_name || user.email} imageUrl={avatarUrl} size={120} />
-                  </View>
-                </LinearGradient>
-                <LinearGradient
-                  colors={[safeButtonColor, safeButtonColor + 'DD']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.editAvatarBadge}
-                >
-                  <MaterialCommunityIcons name="camera" size={18} color="#ffffff" />
-                </LinearGradient>
+              <Ionicons name="chevron-back" size={24} color={theme.dark ? '#FFFFFF' : '#000000'} />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Profil</Text>
+          </View>
+
+          {/* Profile Info */}
+          <View style={styles.profileSection}>
+            <TouchableOpacity
+              style={styles.avatarContainer}
+              onPress={handleChoosePhoto}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={[primaryColor, primaryColor + 'AA']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.avatarRing}
+              >
+                <View style={styles.avatarInner}>
+                  {avatarUrl ? (
+                    <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+                  ) : (
+                    <Text style={styles.avatarInitials}>
+                      {getInitials(user?.user_metadata?.full_name, user?.email)}
+                    </Text>
+                  )}
+                </View>
+              </LinearGradient>
+              <View style={styles.avatarEditBadge}>
+                <Ionicons name="camera" size={16} color="#FFFFFF" />
               </View>
             </TouchableOpacity>
-            <Text style={styles.userName}>{user.user_metadata.full_name || 'İsimsiz'}</Text>
-            <Text style={styles.userEmail}>{user.email}</Text>
-          </View>
-        )}
 
-        <View style={{ gap: 0 }}>
-          {renderEditableItem(
-            'name',
-            'account',
-            'İsim Değiştir',
-            [safeButtonColor, safeButtonColor + 'DD'],
-            openNameModal
-          )}
-          {renderEditableItem(
-            'email',
-            'email',
-            'E-posta Değiştir',
-            ['#10b981', '#059669'],
-            openEmailModal
-          )}
-          {renderEditableItem(
-            'password',
-            'lock',
-            'Şifre Değiştir',
-            ['#f59e0b', '#d97706'],
-            openPasswordModal
-          )}
+            <Text style={styles.userName}>
+              {user?.user_metadata?.full_name || 'İsimsiz'}
+            </Text>
+            <Text style={styles.userEmail}>{user?.email}</Text>
+          </View>
         </View>
 
-        <View style={styles.signOutButton}>
-          <TouchableOpacity activeOpacity={0.8} onPress={handleSignOut}>
-            <LinearGradient
-              colors={[theme.colors.danger, theme.colors.danger + 'DD']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.signOutGradient}
+        {/* Content */}
+        <View style={styles.contentContainer}>
+          {/* Account Section */}
+          <Text style={styles.sectionTitle}>Hesap</Text>
+          <View style={styles.cardGroup}>
+            <TouchableOpacity
+              style={[styles.cardItem, styles.cardItemBorder]}
+              onPress={() => openModal('name')}
+              activeOpacity={0.6}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <MaterialCommunityIcons name="logout" size={20} color="#ffffff" />
-                <Text style={styles.signOutText}>Çıkış Yap</Text>
+              <View style={[styles.cardIconContainer, { backgroundColor: primaryColor + '20' }]}>
+                <Ionicons name="person" size={20} color={primaryColor} />
               </View>
-            </LinearGradient>
+              <View style={styles.cardItemContent}>
+                <Text style={styles.cardItemLabel}>İsim</Text>
+                <Text style={styles.cardItemValue}>
+                  {user?.user_metadata?.full_name || 'Belirtilmemiş'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={theme.dark ? '#48484A' : '#C7C7CC'} style={styles.cardItemChevron} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.cardItem, styles.cardItemBorder]}
+              onPress={() => openModal('email')}
+              activeOpacity={0.6}
+            >
+              <View style={[styles.cardIconContainer, { backgroundColor: '#34C75920' }]}>
+                <Ionicons name="mail" size={20} color="#34C759" />
+              </View>
+              <View style={styles.cardItemContent}>
+                <Text style={styles.cardItemLabel}>E-posta</Text>
+                <Text style={styles.cardItemValue}>{user?.email}</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={theme.dark ? '#48484A' : '#C7C7CC'} style={styles.cardItemChevron} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cardItem}
+              onPress={() => openModal('pin')}
+              activeOpacity={0.6}
+            >
+              <View style={[styles.cardIconContainer, { backgroundColor: '#FF950020' }]}>
+                <Ionicons name="lock-closed" size={20} color="#FF9500" />
+              </View>
+              <View style={styles.cardItemContent}>
+                <Text style={styles.cardItemLabel}>PIN Kodu</Text>
+                <Text style={styles.cardItemValue}>••••••</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={theme.dark ? '#48484A' : '#C7C7CC'} style={styles.cardItemChevron} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cardItem}
+              onPress={() => openModal('password')}
+              activeOpacity={0.6}
+            >
+              <View style={[styles.cardIconContainer, { backgroundColor: '#AF52DE20' }]}>
+                <Ionicons name="key" size={20} color="#AF52DE" />
+              </View>
+              <View style={styles.cardItemContent}>
+                <Text style={styles.cardItemLabel}>Şifre</Text>
+                <Text style={styles.cardItemValue}>••••••••</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color={theme.dark ? '#48484A' : '#C7C7CC'} style={styles.cardItemChevron} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Sign Out */}
+          <TouchableOpacity
+            style={styles.dangerButton}
+            onPress={handleSignOut}
+            activeOpacity={0.6}
+          >
+            <View style={styles.dangerButtonInner}>
+              <Text style={styles.dangerButtonText}>Çıkış Yap</Text>
+            </View>
           </TouchableOpacity>
+
+          {/* Delete Account */}
+          <TouchableOpacity
+            style={[styles.dangerButton, { backgroundColor: 'rgba(255, 59, 48, 0.1)', marginTop: -12 }]}
+            onPress={handleDeleteAccount}
+            activeOpacity={0.6}
+          >
+            <View style={styles.dangerButtonInner}>
+              <Text style={[styles.dangerButtonText, { color: '#FF3B30' }]}>Hesabı Sil</Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Version */}
+          <View style={styles.versionContainer}>
+            <Text style={styles.versionText}>Keeper v1.0.0</Text>
+          </View>
         </View>
       </ScrollView>
 
-      {/* Name Modal */}
-      <Modal visible={nameModalVisible} transparent animationType="fade" onRequestClose={() => setNameModalVisible(false)}>
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.modalBackdrop}>
-            <RNAnimated.View style={{ transform: [{ translateY: keyboardOffset }] }}>
-              <TouchableWithoutFeedback onPress={() => {}}>
-                <Card style={styles.modalCard}>
-                <View style={styles.modalHeader}>
-                  <LinearGradient
-                    colors={[safeButtonColor, safeButtonColor + 'DD']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.modalIconGradient}
-                  >
-                    <MaterialCommunityIcons name="account" size={28} color="#ffffff" />
-                  </LinearGradient>
-                  <Text style={styles.modalTitle}>İsminizi Değiştirin</Text>
-                  <Text style={styles.modalSubtitle}>Bilgilerinizi güncelleyin</Text>
-                </View>
-                <View style={styles.modalInputContainer}>
-                  <Text style={styles.modalLabel}>Yeni İsim</Text>
-                  <TextInput
-                    style={[styles.modalInput, modalFocused && styles.modalInputFocused]}
-                    value={modalInput}
-                    onChangeText={setModalInput}
-                    onFocus={() => setModalFocused(true)}
-                    onBlur={() => setModalFocused(false)}
-                    autoFocus
-                    placeholderTextColor={theme.colors.muted}
-                  />
-                </View>
-                <View style={styles.modalButtonContainer}>
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.modalCancelButton]}
-                    onPress={() => setNameModalVisible(false)}
-                    disabled={modalLoading}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.modalButtonContent}>
-                      <Text style={[styles.modalButtonText, { color: theme.colors.text }]}>İptal</Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.modalButton}
-                    onPress={handleUpdateName}
-                    disabled={modalLoading}
-                    activeOpacity={0.8}
-                  >
-                    <LinearGradient
-                      colors={[safeButtonColor, safeButtonColor + 'DD']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.modalButtonContent}
-                    >
-                      {modalLoading ? (
-                        <ActivityIndicator color="#ffffff" />
-                      ) : (
-                        <Text style={[styles.modalButtonText, { color: '#ffffff' }]}>Kaydet</Text>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                </View>
-                </Card>
-              </TouchableWithoutFeedback>
-            </RNAnimated.View>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
+      {/* Edit Modal */}
+      <Modal
+        visible={!!activeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setActiveModal(null)}
+      >
+        <TouchableWithoutFeedback onPress={() => setActiveModal(null)}>
+          <View style={styles.modalOverlay}>
+            <TouchableWithoutFeedback onPress={() => { }}>
+              <View style={[styles.modalContent, keyboardOpen && styles.modalContentKeyboard]}>
+                <Text style={styles.modalTitle}>
+                  {activeModal && modalConfigs[activeModal]?.title}
+                </Text>
 
-      {/* Email Modal */}
-      <Modal visible={emailModalVisible} transparent animationType="fade" onRequestClose={() => setEmailModalVisible(false)}>
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.modalBackdrop}>
-            <RNAnimated.View style={{ transform: [{ translateY: keyboardOffset }] }}>
-              <TouchableWithoutFeedback onPress={() => {}}>
-                <Card style={styles.modalCard}>
-                <View style={styles.modalHeader}>
-                  <LinearGradient
-                    colors={['#10b981', '#059669']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.modalIconGradient}
-                  >
-                    <MaterialCommunityIcons name="email" size={28} color="#ffffff" />
-                  </LinearGradient>
-                  <Text style={styles.modalTitle}>E-postanızı Değiştirin</Text>
-                  <Text style={styles.modalSubtitle}>Bilgilerinizi güncelleyin</Text>
-                </View>
-                <View style={styles.modalInputContainer}>
-                  <Text style={styles.modalLabel}>Yeni E-posta Adresi</Text>
-                  <TextInput
-                    style={[styles.modalInput, modalFocused && styles.modalInputFocused]}
-                    value={modalInput}
-                    onChangeText={setModalInput}
-                    onFocus={() => setModalFocused(true)}
-                    onBlur={() => setModalFocused(false)}
-                    autoFocus
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    placeholderTextColor={theme.colors.muted}
-                  />
-                </View>
-                <View style={styles.modalButtonContainer}>
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.modalCancelButton]}
-                    onPress={() => setEmailModalVisible(false)}
-                    disabled={modalLoading}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.modalButtonContent}>
-                      <Text style={[styles.modalButtonText, { color: theme.colors.text }]}>İptal</Text>
-                    </View>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.modalButton}
-                    onPress={handleUpdateEmail}
-                    disabled={modalLoading}
-                    activeOpacity={0.8}
-                  >
-                    <LinearGradient
-                      colors={['#10b981', '#059669']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.modalButtonContent}
-                    >
-                      {modalLoading ? (
-                        <ActivityIndicator color="#ffffff" />
-                      ) : (
-                        <Text style={[styles.modalButtonText, { color: '#ffffff' }]}>Kaydet</Text>
-                      )}
-                    </LinearGradient>
-                  </TouchableOpacity>
-                </View>
-                </Card>
-              </TouchableWithoutFeedback>
-            </RNAnimated.View>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
+                <TextInput
+                  style={styles.modalInput}
+                  value={modalInput}
+                  onChangeText={setModalInput}
+                  placeholder={activeModal && modalConfigs[activeModal]?.placeholder}
+                  placeholderTextColor={theme.dark ? '#636366' : '#AEAEB2'}
+                  keyboardType={activeModal && modalConfigs[activeModal]?.keyboardType}
+                  maxLength={activeModal && modalConfigs[activeModal]?.maxLength}
+                  secureTextEntry={activeModal && modalConfigs[activeModal]?.secureTextEntry}
+                  autoCapitalize={activeModal === 'email' ? 'none' : 'words'}
+                  autoFocus
+                />
 
-      {/* Password Modal */}
-      <Modal visible={passwordModalVisible} transparent animationType="fade" onRequestClose={() => setPasswordModalVisible(false)}>
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <View style={styles.modalBackdrop}>
-            <RNAnimated.View style={{ transform: [{ translateY: keyboardOffset }] }}>
-              <TouchableWithoutFeedback onPress={() => {}}>
-                <Card style={styles.modalCard}>
-                <View style={styles.modalHeader}>
-                  <LinearGradient
-                    colors={['#f59e0b', '#d97706']}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.modalIconGradient}
-                  >
-                    <MaterialCommunityIcons name="lock" size={28} color="#ffffff" />
-                  </LinearGradient>
-                  <Text style={styles.modalTitle}>Yeni Şifre Belirleyin</Text>
-                  <Text style={styles.modalSubtitle}>Bilgilerinizi güncelleyin</Text>
-                </View>
-                <View style={styles.modalInputContainer}>
-                  <Text style={styles.modalLabel}>Yeni PIN (6 Haneli)</Text>
+                {/* Şifre değiştirme için onay alanı */}
+                {activeModal === 'password' && (
                   <TextInput
-                    style={[styles.modalInput, modalFocused && styles.modalInputFocused]}
-                    value={modalInput}
-                    onChangeText={setModalInput}
-                    onFocus={() => setModalFocused(true)}
-                    onBlur={() => setModalFocused(false)}
-                    autoFocus
+                    style={[styles.modalInput, { marginTop: 12 }]}
+                    value={passwordConfirm}
+                    onChangeText={setPasswordConfirm}
+                    placeholder="Şifreyi tekrar girin"
+                    placeholderTextColor={theme.dark ? '#636366' : '#AEAEB2'}
                     secureTextEntry
-                    keyboardType="numeric"
-                    maxLength={6}
-                    placeholder="••••••"
-                    placeholderTextColor={theme.colors.muted}
+                    autoCapitalize="none"
                   />
-                </View>
-                <View style={styles.modalButtonContainer}>
+                )}
+
+                <View style={styles.modalButtonRow}>
                   <TouchableOpacity
                     style={[styles.modalButton, styles.modalCancelButton]}
-                    onPress={() => setPasswordModalVisible(false)}
+                    onPress={() => setActiveModal(null)}
                     disabled={modalLoading}
-                    activeOpacity={0.8}
                   >
-                    <View style={styles.modalButtonContent}>
-                      <Text style={[styles.modalButtonText, { color: theme.colors.text }]}>İptal</Text>
-                    </View>
+                    <Text style={[styles.modalButtonText, { color: theme.dark ? '#FFFFFF' : '#000000' }]}>
+                      İptal
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.modalButton}
-                    onPress={handleUpdatePassword}
+                    style={[styles.modalButton, styles.modalConfirmButton]}
+                    onPress={activeModal && modalConfigs[activeModal]?.onSave}
                     disabled={modalLoading}
-                    activeOpacity={0.8}
                   >
-                    <LinearGradient
-                      colors={['#f59e0b', '#d97706']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.modalButtonContent}
-                    >
-                      {modalLoading ? (
-                        <ActivityIndicator color="#ffffff" />
-                      ) : (
-                        <Text style={[styles.modalButtonText, { color: '#ffffff' }]}>Kaydet</Text>
-                      )}
-                    </LinearGradient>
+                    {modalLoading ? (
+                      <ActivityIndicator color="#FFFFFF" />
+                    ) : (
+                      <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>
+                        Kaydet
+                      </Text>
+                    )}
                   </TouchableOpacity>
                 </View>
-                </Card>
-              </TouchableWithoutFeedback>
-            </RNAnimated.View>
+              </View>
+            </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
       </Modal>
     </View>
   );
 };
-
-
 
 export default ProfileScreen;

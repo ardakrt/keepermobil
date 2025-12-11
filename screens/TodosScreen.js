@@ -9,7 +9,6 @@ import {
   Modal,
   RefreshControl,
   ActivityIndicator,
-  Alert,
   Platform,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -29,6 +28,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAppTheme } from '../lib/theme';
 import { usePrefs } from '../lib/prefs';
 import { useToast } from '../lib/toast';
+import { useConfirm } from '../lib/confirm';
 import { supabase } from '../lib/supabaseClient';
 
 // Öncelik renkleri
@@ -157,7 +157,7 @@ const TodoCard = React.memo(({ todo, onPress, onStatusChange, theme, accent, hap
 });
 
 // Todo Ekleme/Düzenleme Modalı
-const TodoModal = ({ visible, todo, onClose, onSave, theme, accent }) => {
+const TodoModal = ({ visible, todo, onClose, onSave, onValidationError, theme, accent }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
@@ -184,7 +184,7 @@ const TodoModal = ({ visible, todo, onClose, onSave, theme, accent }) => {
 
   const handleSave = async () => {
     if (!title.trim()) {
-      Alert.alert('Hata', 'Başlık gerekli');
+      onValidationError?.();
       return;
     }
     setIsSaving(true);
@@ -359,6 +359,7 @@ export default function TodosScreen() {
   const { theme, accent } = useAppTheme();
   const { hapticsEnabled } = usePrefs();
   const { showToast } = useToast();
+  const { confirm, alert } = useConfirm();
   const insets = useSafeAreaInsets();
 
   const [todos, setTodos] = useState([]);
@@ -470,34 +471,36 @@ export default function TodosScreen() {
 
   // Todo sil
   const handleDeleteTodo = useCallback(async (todoId) => {
-    Alert.alert(
-      'Görevi Sil',
-      'Bu görevi silmek istediğinize emin misiniz?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Sil',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const { error } = await supabase
-                .from('todos')
-                .delete()
-                .eq('id', todoId);
+    const ok = await confirm({
+      title: 'Görevi Sil',
+      message: 'Bu görevi kalıcı olarak silmek istediğine emin misin?',
+      confirmText: 'Evet, Sil',
+      cancelText: 'Vazgeç',
+      destructive: true,
+    });
+    
+    if (!ok) return;
 
-              if (error) throw error;
-              
-              setTodos(prev => prev.filter(t => t.id !== todoId));
-              showToast('Görev silindi', 'Görev başarıyla kaldırıldı');
-            } catch (error) {
-              console.error('Delete error:', error);
-              showToast('Hata', 'Görev silinemedi');
-            }
-          },
-        },
-      ]
-    );
-  }, [showToast]);
+    try {
+      const { error } = await supabase
+        .from('todos')
+        .delete()
+        .eq('id', todoId);
+
+      if (error) throw error;
+      
+      setTodos(prev => prev.filter(t => t.id !== todoId));
+      showToast('Görev silindi', 'Görev başarıyla kaldırıldı');
+    } catch (error) {
+      console.error('Delete error:', error);
+      await alert({
+        type: 'error',
+        title: 'Silme Hatası',
+        message: 'Görev silinemedi. Lütfen tekrar dene.',
+        buttonText: 'Tamam',
+      });
+    }
+  }, [showToast, confirm, alert]);
 
   // Filtrelenmiş todolar
   const filteredTodos = useMemo(() => {
@@ -674,6 +677,14 @@ export default function TodosScreen() {
           setEditingTodo(null);
         }}
         onSave={handleSaveTodo}
+        onValidationError={async () => {
+          await alert({
+            type: 'warning',
+            title: 'Başlık Gerekli',
+            message: 'Görev oluşturmak için bir başlık girmelisin.',
+            buttonText: 'Anladım',
+          });
+        }}
         theme={theme}
         accent={accent}
       />

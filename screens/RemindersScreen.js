@@ -248,7 +248,7 @@ const RemindersScreen = ({ embedded = false }) => {
 
   const [notificationMap, setNotificationMap] = useState({});
   const notificationMapRef = useRef({});
-  const { confirm } = useConfirm();
+  const { confirm, alert } = useConfirm();
   const { showToast } = useToast();
 
   const now = useCallback(() => new Date(), []);
@@ -386,7 +386,7 @@ const RemindersScreen = ({ embedded = false }) => {
       if (remindersError) throw remindersError;
 
       setReminders(data ?? []);
-      await syncNotificationsForReminders(data ?? []);
+      // await syncNotificationsForReminders(data ?? []); // REMOVED: Prevent duplicate scheduling
     } catch (err) {
       console.warn('Fetch reminders failed', err);
       setError(err.message ?? 'Hatırlatmalar yüklenirken hata oluştu.');
@@ -483,11 +483,21 @@ const RemindersScreen = ({ embedded = false }) => {
 
   const handleAddReminder = async () => {
     if (!newTitle.trim()) {
-      setError('Hatırlatma başlığı zorunlu.');
+      await alert({
+        type: 'warning',
+        title: 'Başlık Gerekli',
+        message: 'Hatırlatma oluşturmak için bir başlık girmelisin.',
+        buttonText: 'Anladım',
+      });
       return;
     }
     if (!userId) {
-      setError('Oturum bulunamadı. Lütfen tekrar giriş yapın.');
+      await alert({
+        type: 'error',
+        title: 'Oturum Hatası',
+        message: 'Oturum bilgisi bulunamadı. Lütfen uygulamayı yeniden başlatın.',
+        buttonText: 'Tamam',
+      });
       return;
     }
 
@@ -532,10 +542,14 @@ const RemindersScreen = ({ embedded = false }) => {
       resetForm();
       setShowBottomSheet(false);
       showToast('Başarılı', 'Hatırlatma eklendi');
-      await scheduleNotificationForReminder(data);
     } catch (err) {
       console.warn('Insert reminder failed', err);
-      setError(err.message ?? 'Hatırlatma kaydedilemedi.');
+      await alert({
+        type: 'error',
+        title: 'Kayıt Hatası',
+        message: err.message ?? 'Hatırlatma kaydedilemedi. Lütfen tekrar deneyin.',
+        buttonText: 'Tamam',
+      });
     } finally {
       setSaving(false);
     }
@@ -552,7 +566,12 @@ const RemindersScreen = ({ embedded = false }) => {
   const handleUpdateReminder = async () => {
     if (!editingId) return;
     if (!editingTitle.trim()) {
-      setError('Güncelleme için başlık gerekli.');
+      await alert({
+        type: 'warning',
+        title: 'Başlık Gerekli',
+        message: 'Hatırlatmayı güncellemek için bir başlık girmelisin.',
+        buttonText: 'Anladım',
+      });
       return;
     }
 
@@ -589,13 +608,17 @@ const RemindersScreen = ({ embedded = false }) => {
       setReminders((prev) =>
         prev.map((item) => (item.id === data.id ? data : item)).sort((a, b) => new Date(a.due_at) - new Date(b.due_at))
       );
-      await scheduleNotificationForReminder(data);
       resetEditing();
       setShowBottomSheet(false);
       showToast('Başarılı', 'Hatırlatma güncellendi');
     } catch (err) {
       console.warn('Update reminder failed', err);
-      setError(err.message ?? 'Hatırlatma güncellenemedi.');
+      await alert({
+        type: 'error',
+        title: 'Güncelleme Hatası',
+        message: err.message ?? 'Hatırlatma güncellenemedi. Lütfen tekrar deneyin.',
+        buttonText: 'Tamam',
+      });
     } finally {
       setUpdating(false);
     }
@@ -619,14 +642,18 @@ const RemindersScreen = ({ embedded = false }) => {
       if (deleteError) throw deleteError;
 
       setReminders((prev) => prev.filter((item) => item.id !== reminderId));
-      await cancelNotificationForReminder(reminderId);
       if (editingId === reminderId) {
         resetEditing();
       }
       showToast('Silindi', 'Hatırlatma silindi');
     } catch (err) {
       console.warn('Delete reminder failed', err);
-      setError(err.message ?? 'Hatırlatma silinemedi.');
+      await alert({
+        type: 'error',
+        title: 'Silme Hatası',
+        message: err.message ?? 'Hatırlatma silinemedi. Lütfen tekrar deneyin.',
+        buttonText: 'Tamam',
+      });
     } finally {
       setDeletingId(null);
     }
@@ -649,10 +676,8 @@ const RemindersScreen = ({ embedded = false }) => {
       setReminders((prev) => prev.map((item) => (item.id === data.id ? data : item)));
 
       if (newStatus) {
-        await cancelNotificationForReminder(reminderId);
         showToast('Tamamlandı', 'Hatırlatma tamamlandı olarak işaretlendi');
       } else {
-        await scheduleNotificationForReminder(data);
         showToast('Geri alındı', 'Hatırlatma aktif olarak işaretlendi');
       }
     } catch (err) {

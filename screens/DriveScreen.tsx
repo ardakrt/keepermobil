@@ -42,6 +42,10 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../lib/supabaseClient';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import * as WebBrowser from 'expo-web-browser';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import SessionExpiredModal from '../components/SessionExpiredModal';
 
 import * as Haptics from 'expo-haptics';
 
@@ -74,29 +78,53 @@ export default function DriveScreen({ navigation }) {
   const [fileToDelete, setFileToDelete] = useState<DriveFile | null>(null);
   const [previewFile, setPreviewFile] = useState<DriveFile | null>(null);
   const [previewLoading, setPreviewLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadPickerVisible, setUploadPickerVisible] = useState(false);
+  const [sessionExpiredVisible, setSessionExpiredVisible] = useState(false);
+
+  // Kullanıcıya özel token key'i oluştur
+  const getTokenKey = (userId: string) => `google_drive_token_${userId}`;
 
   useEffect(() => {
     (async () => {
       const { data: sessionData } = await supabase.auth.getSession();
       setSession(sessionData?.session);
-    })();
 
-    GoogleSignin.configure({
-      webClientId: '961544758987-fk2o1sujm7n3o55s23ku6u57tckfv7ij.apps.googleusercontent.com', 
-      scopes: ['https://www.googleapis.com/auth/drive'], // Full access for delete
-      offlineAccess: true,
-    });
-    checkLocalToken();
+      // Session varsa, kullanıcıya özel token'ı kontrol et
+      if (sessionData?.session?.user?.id) {
+        GoogleSignin.configure({
+          webClientId: '961544758987-fk2o1sujm7n3o55s23ku6u57tckfv7ij.apps.googleusercontent.com',
+          scopes: ['https://www.googleapis.com/auth/drive'],
+          offlineAccess: true,
+          forceCodeForRefreshToken: true, // Her zaman yeni refresh token al
+        });
+        checkLocalToken(sessionData.session.user.id);
+      }
+    })();
+  }, []);
+
+  // Eski global token'ı temizle (güvenlik için)
+  useEffect(() => {
+    (async () => {
+      // Eski global token varsa sil
+      await SecureStore.deleteItemAsync('google_drive_token').catch(() => { });
+    })();
   }, []);
 
   const handleLogin = async () => {
     try {
+      if (!session?.user?.id) {
+        Alert.alert("Hata", "Önce Keeper hesabınıza giriş yapın.");
+        return;
+      }
+
       await GoogleSignin.hasPlayServices();
       await GoogleSignin.signIn();
       const tokens = await GoogleSignin.getTokens();
-      
+
       if (tokens.accessToken) {
-        saveToken(tokens.accessToken);
+        await saveToken(tokens.accessToken, session.user.id);
         fetchFiles(tokens.accessToken, 'root');
       }
     } catch (error: any) {
@@ -111,14 +139,14 @@ export default function DriveScreen({ navigation }) {
     }
   };
 
-  const saveToken = async (newToken: string) => {
+  const saveToken = async (newToken: string, userId: string) => {
     setToken(newToken);
-    await SecureStore.setItemAsync('google_drive_token', newToken);
+    await SecureStore.setItemAsync(getTokenKey(userId), newToken);
   };
 
-  const checkLocalToken = async () => {
+  const checkLocalToken = async (userId: string) => {
     setLoading(true);
-    const savedToken = await SecureStore.getItemAsync('google_drive_token');
+    const savedToken = await SecureStore.getItemAsync(getTokenKey(userId));
     if (savedToken) {
       setToken(savedToken);
       fetchFiles(savedToken, 'root');
@@ -130,7 +158,9 @@ export default function DriveScreen({ navigation }) {
   const handleLogout = async () => {
     try {
       await GoogleSignin.signOut();
-      await SecureStore.deleteItemAsync('google_drive_token');
+      if (session?.user?.id) {
+        await SecureStore.deleteItemAsync(getTokenKey(session.user.id));
+      }
       setToken(null);
       setFiles([]);
       setCurrentFolderId('root');
@@ -142,14 +172,85 @@ export default function DriveScreen({ navigation }) {
 
   const refreshToken = async (): Promise<string | null> => {
     try {
-      const tokens = await GoogleSignin.getTokens();
-      if (tokens.accessToken) {
-        await saveToken(tokens.accessToken);
-        return tokens.accessToken;
+      if (!session?.user?.id) return null;
+
+      console.log('Drive: Token yenileme başlıyor...');
+
+      // 1. Önce mevcut token'ları almayı dene (belki henüz expire olmamıştır)
+      try {
+        const currentTokens = await GoogleSignin.getTokens();
+        if (currentTokens.accessToken) {
+          // Token'ın hala geçerli olup olmadığını test et
+          const testResponse = await fetch(
+            'https://www.googleapis.com/drive/v3/about?fields=user',
+            { headers: { Authorization: `Bearer ${currentTokens.accessToken}` } }
+          );
+
+          if (testResponse.ok) {
+            console.log('Drive: Mevcut token hala geçerli');
+            await saveToken(currentTokens.accessToken, session.user.id);
+            return currentTokens.accessToken;
+          }
+        }
+      } catch (e) {
+        console.log('Drive: Mevcut token geçersiz veya alınamadı');
       }
+
+      // 2. Sessiz giriş ile yeni token al
+      try {
+        console.log('Drive: Sessiz giriş deneniyor...');
+        const userInfo = await GoogleSignin.signInSilently();
+        if (userInfo) {
+          const tokens = await GoogleSignin.getTokens();
+          if (tokens.accessToken) {
+            console.log('Drive: Sessiz giriş başarılı, yeni token alındı');
+            await saveToken(tokens.accessToken, session.user.id);
+            return tokens.accessToken;
+          }
+        }
+      } catch (silentError: any) {
+        console.warn('Drive: Sessiz giriş hatası:', silentError?.code, silentError?.message);
+
+        // SIGN_IN_REQUIRED hatası - kullanıcının yeniden giriş yapması gerekiyor
+        if (silentError?.code === statusCodes.SIGN_IN_REQUIRED) {
+          console.log('Drive: Sessiz giriş başarısız, tam giriş gerekiyor');
+
+          // Otomatik olarak tam giriş yapmayı dene
+          try {
+            await GoogleSignin.hasPlayServices();
+            await GoogleSignin.signIn();
+            const tokens = await GoogleSignin.getTokens();
+
+            if (tokens.accessToken) {
+              console.log('Drive: Tam giriş başarılı, yeni token alındı');
+              await saveToken(tokens.accessToken, session.user.id);
+              return tokens.accessToken;
+            }
+          } catch (signInError) {
+            console.error('Drive: Tam giriş de başarısız:', signInError);
+          }
+        }
+      }
+
+      // 3. Son çare: clearCachedAccessToken ve tekrar dene
+      try {
+        console.log('Drive: Cache temizleniyor ve tekrar deneniyor...');
+        await GoogleSignin.clearCachedAccessToken(token || '');
+        const tokens = await GoogleSignin.getTokens();
+        if (tokens.accessToken) {
+          console.log('Drive: Cache temizleme sonrası token alındı');
+          await saveToken(tokens.accessToken, session.user.id);
+          return tokens.accessToken;
+        }
+      } catch (e) {
+        console.warn('Drive: Cache temizleme sonrası da başarısız');
+      }
+
     } catch (error) {
-      console.error("Token yenileme hatası:", error);
+      console.error('Drive: Token yenileme genel hatası:', error);
     }
+
+    console.warn('Drive: Tüm token yenileme denemeleri başarısız');
     return null;
   };
 
@@ -164,31 +265,35 @@ export default function DriveScreen({ navigation }) {
       } else {
         query = `'${folderId}' in parents and trashed=false`;
       }
-      
+
       const response = await fetch(
         `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,thumbnailLink,webViewLink,parents)&pageSize=100&orderBy=folder,name&spaces=drive`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
-      
+
       if (response.status === 401) {
         // Token expired, try to refresh
+        console.log('Drive: 401 hatası alındı, token yenilenecek...');
         const newToken = await refreshToken();
         if (newToken) {
+          console.log('Drive: Token yenilendi, dosyalar tekrar yükleniyor...');
           return fetchFiles(newToken, folderId);
         }
-        Alert.alert("Oturum", "Süre doldu, tekrar giriş yapın.");
-        handleLogout();
+
+        // Token yenilenemedi - session expired modal göster
+        console.warn('Drive: Token yenilenemedi, kullanıcı girişi gerekiyor');
+        setSessionExpiredVisible(true);
         return;
       }
 
       const data = await response.json();
-      
+
       if (data.error) {
         console.error('Drive API Error:', data.error);
         Alert.alert("API Hatası", data.error.message || "Bilinmeyen hata");
         return;
       }
-      
+
       if (data.files) {
         // Sort: folders first, then files
         const sorted = data.files.sort((a: DriveFile, b: DriveFile) => {
@@ -270,10 +375,10 @@ export default function DriveScreen({ navigation }) {
 
   const handleConfirmDelete = async () => {
     if (!fileToDelete) return;
-    
+
     setDeleteModalVisible(false);
     const file = fileToDelete;
-    
+
     try {
       const response = await fetch(
         `https://www.googleapis.com/drive/v3/files/${file.id}`,
@@ -282,7 +387,7 @@ export default function DriveScreen({ navigation }) {
           headers: { Authorization: `Bearer ${token}` }
         }
       );
-      
+
       if (response.status === 204 || response.ok) {
         setFiles(prev => prev.filter(f => f.id !== file.id));
         // Alert.alert("Başarılı", "Dosya silindi."); // Optional: Toast might be better
@@ -317,6 +422,190 @@ export default function DriveScreen({ navigation }) {
   const onRefresh = () => {
     setRefreshing(true);
     if (token) fetchFiles(token, currentFolderId);
+  };
+
+  // ============================================
+  // UPLOAD FUNCTIONS
+  // ============================================
+
+  const pickFromGallery = async () => {
+    setUploadPickerVisible(false);
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      allowsMultipleSelection: true,
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets.length > 0) {
+      for (const asset of result.assets) {
+        await uploadFileToDrive(asset.uri, asset.fileName || `photo_${Date.now()}.jpg`);
+      }
+    }
+  };
+
+  const pickFromFiles = async () => {
+    setUploadPickerVisible(false);
+
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: '*/*',
+        multiple: true,
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets.length > 0) {
+        for (const asset of result.assets) {
+          await uploadFileToDrive(asset.uri, asset.name);
+        }
+      }
+    } catch (error) {
+      console.error('Document picker error:', error);
+      Alert.alert('Hata', 'Dosya seçilirken bir hata oluştu.');
+    }
+  };
+
+  const uploadFileToDrive = async (fileUri: string, fileName: string) => {
+    if (!token) {
+      Alert.alert('Hata', 'Google Drive\'a bağlı değilsiniz.');
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(0);
+
+    try {
+      // Read file as base64
+      let base64Data: string;
+      let finalUri = fileUri;
+
+      // If it's a content:// URI (Android), copy to cache first
+      if (fileUri.startsWith('content://')) {
+        const cacheUri = FileSystem.cacheDirectory + fileName;
+        await FileSystem.copyAsync({
+          from: fileUri,
+          to: cacheUri,
+        });
+        finalUri = cacheUri;
+      }
+
+      try {
+        base64Data = await FileSystem.readAsStringAsync(finalUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      } catch (readError) {
+        console.error('File read error:', readError);
+        throw new Error('Dosya okunamadı');
+      }
+
+      // Determine MIME type from extension
+      const extension = fileName.split('.').pop()?.toLowerCase() || '';
+      const mimeTypes: { [key: string]: string } = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        mp4: 'video/mp4',
+        mov: 'video/quicktime',
+        avi: 'video/x-msvideo',
+        pdf: 'application/pdf',
+        doc: 'application/msword',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        xls: 'application/vnd.ms-excel',
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ppt: 'application/vnd.ms-powerpoint',
+        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        txt: 'text/plain',
+        zip: 'application/zip',
+        rar: 'application/x-rar-compressed',
+        mp3: 'audio/mpeg',
+        wav: 'audio/wav',
+      };
+      const mimeType = mimeTypes[extension] || 'application/octet-stream';
+
+      setUploadProgress(20);
+
+      // Create metadata
+      const metadata = {
+        name: fileName,
+        parents: [currentFolderId === 'root' ? 'root' : currentFolderId],
+      };
+
+      // Create multipart body
+      const boundary = '-------314159265358979323846';
+      const delimiter = '\r\n--' + boundary + '\r\n';
+      const closeDelimiter = '\r\n--' + boundary + '--';
+
+      const body =
+        delimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: ' + mimeType + '\r\n' +
+        'Content-Transfer-Encoding: base64\r\n\r\n' +
+        base64Data +
+        closeDelimiter;
+
+      setUploadProgress(50);
+
+      // Upload to Google Drive
+      const response = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,mimeType,size,thumbnailLink,webViewLink,parents',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`,
+          },
+          body: body,
+        }
+      );
+
+      setUploadProgress(90);
+
+      if (response.status === 401) {
+        // Token expired, refresh and retry
+        const newToken = await refreshToken();
+        if (newToken) {
+          setUploading(false);
+          await uploadFileToDrive(fileUri, fileName);
+          return;
+        }
+        throw new Error('Oturum süresi doldu, tekrar giriş yapın.');
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'Yükleme başarısız oldu.');
+      }
+
+      const uploadedFile = await response.json();
+      setUploadProgress(100);
+
+      // Add to files list
+      setFiles(prev => [uploadedFile, ...prev]);
+
+      // Success haptic
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    } catch (error: any) {
+      console.error('Upload error:', error);
+      Alert.alert('Yükleme Hatası', error.message || 'Dosya yüklenirken bir hata oluştu.');
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+    }
+  };
+
+  const handleUploadPress = () => {
+    if (!token) {
+      handleLogin();
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setUploadPickerVisible(true);
   };
 
   const formatSize = (bytes: string | undefined) => {
@@ -355,7 +644,7 @@ export default function DriveScreen({ navigation }) {
       // Resim ve video için modal önizleme (token ile çalışır)
       const isImage = item.mimeType.startsWith('image/');
       const isVideo = item.mimeType.startsWith('video/');
-      
+
       if (isImage || isVideo) {
         setPreviewLoading(true);
         setPreviewFile(item);
@@ -389,7 +678,7 @@ export default function DriveScreen({ navigation }) {
   };
 
   const renderItem = ({ item }: { item: DriveFile }) => (
-    <TouchableOpacity 
+    <TouchableOpacity
       style={[styles.card, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}
       onPress={() => handleItemPress(item)}
       onLongPress={() => deleteFile(item)}
@@ -409,7 +698,7 @@ export default function DriveScreen({ navigation }) {
       {item.thumbnailLink ? (
         <Image source={{ uri: item.thumbnailLink }} style={styles.thumbnail} />
       ) : item.mimeType !== 'application/vnd.google-apps.folder' && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.deleteButton}
           onPress={() => deleteFile(item)}
           hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -428,9 +717,9 @@ export default function DriveScreen({ navigation }) {
             <Text style={[styles.breadcrumbSeparator, { color: theme.colors.textSecondary }]}>/</Text>
           )}
           <TouchableOpacity onPress={() => goToFolder(index)}>
-            <Text 
+            <Text
               style={[
-                styles.breadcrumbText, 
+                styles.breadcrumbText,
                 { color: index === folderPath.length - 1 ? theme.colors.primary : theme.colors.textSecondary }
               ]}
               numberOfLines={1}
@@ -444,9 +733,9 @@ export default function DriveScreen({ navigation }) {
   );
 
   const styles = StyleSheet.create({
-    container: { 
-      flex: 1, 
-      backgroundColor: accent && theme.colors.backgroundTinted ? theme.colors.backgroundTinted : theme.colors.background 
+    container: {
+      flex: 1,
+      backgroundColor: accent && theme.colors.backgroundTinted ? theme.colors.backgroundTinted : theme.colors.background
     },
     customHeader: {
       paddingTop: insets.top + 8,
@@ -487,51 +776,51 @@ export default function DriveScreen({ navigation }) {
       borderColor: theme.colors.primary + '40',
       backgroundColor: theme.colors.surface,
     },
-    header: { 
-      flexDirection: 'row', 
-      justifyContent: 'space-between', 
-      alignItems: 'center', 
-      paddingHorizontal: 16, 
-      paddingBottom: 8, 
-      paddingTop: 8 
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingBottom: 8,
+      paddingTop: 8
     },
     headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-    backButton: { 
-      width: 40, 
-      height: 40, 
-      borderRadius: 20, 
-      backgroundColor: theme.colors.surface, 
-      borderWidth: 1, 
-      borderColor: theme.colors.border, 
-      alignItems: 'center', 
-      justifyContent: 'center' 
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center'
     },
     title: { fontSize: 28, fontWeight: '700', color: theme.colors.text },
     actionButtons: { flexDirection: 'row', gap: 10 },
-    uploadButton: { 
-      flexDirection: 'row', 
-      alignItems: 'center', 
-      backgroundColor: accent || theme.colors.primary, 
-      paddingHorizontal: 16, 
-      paddingVertical: 8, 
-      borderRadius: 24, 
-      gap: 6 
+    uploadButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: accent || theme.colors.primary,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 24,
+      gap: 6
     },
-    logoutButton: { 
-      width: 40, 
-      height: 40, 
-      borderRadius: 20, 
-      backgroundColor: theme.colors.surface, 
-      borderWidth: 1, 
-      borderColor: theme.colors.border, 
-      alignItems: 'center', 
-      justifyContent: 'center' 
+    logoutButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center'
     },
     uploadButtonText: { fontWeight: '600', fontSize: 14 },
-    breadcrumbContainer: { 
-      flexDirection: 'row', 
-      alignItems: 'center', 
-      paddingHorizontal: 16, 
+    breadcrumbContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
       paddingBottom: 12,
       flexWrap: 'wrap'
     },
@@ -539,39 +828,39 @@ export default function DriveScreen({ navigation }) {
     breadcrumbText: { fontSize: 14, fontWeight: '500', maxWidth: 100 },
     breadcrumbSeparator: { marginHorizontal: 6, fontSize: 14 },
     listContent: { padding: 16, paddingTop: 0 },
-    card: { 
-      flexDirection: 'row', 
-      alignItems: 'center', 
-      padding: 12, 
-      marginBottom: 10, 
-      borderRadius: 16, 
-      borderWidth: 1, 
-      gap: 12 
+    card: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 12,
+      marginBottom: 10,
+      borderRadius: 16,
+      borderWidth: 1,
+      gap: 12
     },
-    cardIconContainer: { 
-      width: 44, 
-      height: 44, 
-      alignItems: 'center', 
-      justifyContent: 'center', 
-      borderRadius: 12 
+    cardIconContainer: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 12
     },
     cardContent: { flex: 1, gap: 2 },
     fileName: { fontSize: 15, fontWeight: '600' },
     fileMeta: { fontSize: 12 },
     thumbnail: { width: 44, height: 44, borderRadius: 8 },
-    deleteButton: { 
-      width: 36, 
-      height: 36, 
-      alignItems: 'center', 
+    deleteButton: {
+      width: 36,
+      height: 36,
+      alignItems: 'center',
       justifyContent: 'center',
       borderRadius: 18
     },
-    emptyContainer: { 
-      flex: 1, 
-      alignItems: 'center', 
-      justifyContent: 'center', 
-      paddingTop: 100, 
-      gap: 16 
+    emptyContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingTop: 100,
+      gap: 16
     },
     emptyText: { fontSize: 16, color: theme.colors.textSecondary, textAlign: 'center' },
     // Preview Modal Styles
@@ -678,6 +967,83 @@ export default function DriveScreen({ navigation }) {
       fontSize: 16,
       fontWeight: '600',
     },
+    // Upload Picker Modal
+    uploadPickerOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'flex-end',
+    },
+    uploadPickerContainer: {
+      backgroundColor: theme.colors.surface,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      paddingBottom: insets.bottom + 16,
+      paddingTop: 8,
+    },
+    uploadPickerHandle: {
+      width: 40,
+      height: 4,
+      backgroundColor: theme.colors.border,
+      borderRadius: 2,
+      alignSelf: 'center',
+      marginBottom: 16,
+    },
+    uploadPickerTitle: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: theme.colors.text,
+      textAlign: 'center',
+      marginBottom: 20,
+    },
+    uploadPickerOptions: {
+      paddingHorizontal: 16,
+      gap: 12,
+    },
+    uploadPickerOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 16,
+      backgroundColor: theme.colors.background,
+      borderRadius: 16,
+      gap: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    uploadPickerOptionIcon: {
+      width: 48,
+      height: 48,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    uploadPickerOptionContent: {
+      flex: 1,
+    },
+    uploadPickerOptionTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.colors.text,
+      marginBottom: 2,
+    },
+    uploadPickerOptionSubtitle: {
+      fontSize: 13,
+      color: theme.colors.textSecondary,
+    },
+    uploadPickerCancel: {
+      marginTop: 8,
+      marginHorizontal: 16,
+      padding: 16,
+      backgroundColor: theme.colors.background,
+      borderRadius: 16,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    uploadPickerCancelText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.colors.error || '#EF4444',
+    },
   });
 
   return (
@@ -718,14 +1084,20 @@ export default function DriveScreen({ navigation }) {
               <LogOut color={theme.colors.error || '#EF4444'} size={18} />
             </TouchableOpacity>
           )}
-          <TouchableOpacity 
-            style={styles.uploadButton} 
-            onPress={() => !token ? handleLogin() : Alert.alert('Bilgi', 'Yükleme özelliği yakında gelecek.')}
+          <TouchableOpacity
+            style={[styles.uploadButton, uploading && { opacity: 0.7 }]}
+            onPress={handleUploadPress}
+            disabled={uploading}
           >
             {!token ? (
               <>
                 <HardDrive color={accent ? '#fff' : (theme.dark ? '#000' : '#fff')} size={18} />
                 <Text style={[styles.uploadButtonText, { color: accent ? '#fff' : (theme.dark ? '#000' : '#fff') }]}>Bağlan</Text>
+              </>
+            ) : uploading ? (
+              <>
+                <ActivityIndicator size="small" color={accent ? '#fff' : (theme.dark ? '#000' : '#fff')} />
+                <Text style={[styles.uploadButtonText, { color: accent ? '#fff' : (theme.dark ? '#000' : '#fff') }]}>{uploadProgress}%</Text>
               </>
             ) : (
               <>
@@ -759,8 +1131,8 @@ export default function DriveScreen({ navigation }) {
             <View style={styles.emptyContainer}>
               <HardDrive color={theme.colors.muted || theme.colors.textSecondary} size={48} />
               <Text style={styles.emptyText}>
-                {!token 
-                  ? 'Dosyaları görmek için\nGoogle Drive\'a bağlanın' 
+                {!token
+                  ? 'Dosyaları görmek için\nGoogle Drive\'a bağlanın'
                   : 'Bu klasörde dosya bulunamadı'}
               </Text>
             </View>
@@ -786,12 +1158,12 @@ export default function DriveScreen({ navigation }) {
       >
         <View style={styles.previewModal}>
           <StatusBar barStyle="light-content" backgroundColor="rgba(0,0,0,0.95)" />
-          
+
           {/* Modal Header */}
           <View style={styles.previewHeader}>
             <View style={styles.previewHeaderLeft}>
-              <TouchableOpacity 
-                style={styles.previewCloseButton} 
+              <TouchableOpacity
+                style={styles.previewCloseButton}
                 onPress={() => setPreviewFile(null)}
               >
                 <MaterialCommunityIcons name="close" size={24} color="#fff" />
@@ -842,7 +1214,7 @@ export default function DriveScreen({ navigation }) {
                 <Text style={styles.previewVideoText}>
                   Video önizlemesi için harici tarayıcıda açın
                 </Text>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.previewOpenButton}
                   onPress={handleOpenExternal}
                 >
@@ -854,6 +1226,73 @@ export default function DriveScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+
+      {/* Upload Picker Modal */}
+      <Modal
+        visible={uploadPickerVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setUploadPickerVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.uploadPickerOverlay}
+          activeOpacity={1}
+          onPress={() => setUploadPickerVisible(false)}
+        >
+          <View style={styles.uploadPickerContainer}>
+            <View style={styles.uploadPickerHandle} />
+            <Text style={styles.uploadPickerTitle}>Dosya Yükle</Text>
+
+            <View style={styles.uploadPickerOptions}>
+              <TouchableOpacity
+                style={styles.uploadPickerOption}
+                onPress={pickFromGallery}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.uploadPickerOptionIcon, { backgroundColor: '#3B82F620' }]}>
+                  <ImageIcon color="#3B82F6" size={24} />
+                </View>
+                <View style={styles.uploadPickerOptionContent}>
+                  <Text style={styles.uploadPickerOptionTitle}>Galeri</Text>
+                  <Text style={styles.uploadPickerOptionSubtitle}>Fotoğraf veya video seç</Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.uploadPickerOption}
+                onPress={pickFromFiles}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.uploadPickerOptionIcon, { backgroundColor: '#8B5CF620' }]}>
+                  <File color="#8B5CF6" size={24} />
+                </View>
+                <View style={styles.uploadPickerOptionContent}>
+                  <Text style={styles.uploadPickerOptionTitle}>Dosyalar</Text>
+                  <Text style={styles.uploadPickerOptionSubtitle}>PDF, belge, zip ve diğer dosyalar</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.uploadPickerCancel}
+              onPress={() => setUploadPickerVisible(false)}
+            >
+              <Text style={styles.uploadPickerCancelText}>İptal</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+      <SessionExpiredModal
+        visible={sessionExpiredVisible}
+        onLogin={() => {
+          setSessionExpiredVisible(false);
+          handleLogin();
+        }}
+        onCancel={() => {
+          setSessionExpiredVisible(false);
+          handleLogout(); // Vazgeçerse çıkış yap
+        }}
+      />
     </View>
   );
 }

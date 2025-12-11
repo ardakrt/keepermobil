@@ -63,6 +63,7 @@ import { enrichSubscription, formatCurrency, getBadgeConfig } from '../lib/finan
 import { getBrandInfo, getServiceInfo, getBankInfo } from '../lib/serviceIcons';
 import ServiceLogo from '../components/ServiceLogo';
 import Constants from 'expo-constants';
+import { getCachedSubscriptions } from '../lib/prefetchService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -78,21 +79,21 @@ async function analyzeImageWithGemini(base64data) {
     if (!base64data) {
       throw new Error('Base64 data is undefined');
     }
-    
+
     // Get API key from environment
-    const apiKey = 
+    const apiKey =
       process.env.EXPO_PUBLIC_GEMINI_API_KEY?.trim() ||
-      Constants.expoConfig?.extra?.geminiApiKey?.trim() || 
+      Constants.expoConfig?.extra?.geminiApiKey?.trim() ||
       Constants.expoConfig?.extra?.GEMINI_API_KEY?.trim() ||
       Constants.manifest?.extra?.geminiApiKey?.trim();
-    
+
     console.log('API Key check:', {
       fromEnv: !!process.env.EXPO_PUBLIC_GEMINI_API_KEY,
       fromExtra: !!Constants.expoConfig?.extra?.geminiApiKey,
       apiKeyLength: apiKey?.length || 0,
       apiKeyPreview: apiKey ? `${apiKey.substring(0, 10)}...` : 'undefined'
     });
-    
+
     if (!apiKey || apiKey === 'undefined' || apiKey === '${EXPO_PUBLIC_GEMINI_API_KEY}') {
       console.error('Gemini API key bulunamadı veya geçersiz:', {
         EXPO_PUBLIC_GEMINI_API_KEY: process.env.EXPO_PUBLIC_GEMINI_API_KEY,
@@ -126,7 +127,7 @@ Important:
 
     // Model name
     const MODEL_NAME = "gemini-2.5-flash";
-    
+
     // Clean base64 data (remove data URI prefix if present)
     const cleanBase64 = base64data.replace(/^data:image\/(png|jpg|jpeg);base64,/, "");
 
@@ -156,20 +157,20 @@ Important:
     );
 
     const data = await response.json();
-    
+
     if (!response.ok) {
       throw new Error(data.error?.message || 'Gemini API hatası');
     }
 
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    
+
     if (!text) {
       console.error('Gemini API Response:', JSON.stringify(data, null, 2));
       throw new Error('Gemini API\'den metin yanıtı alınamadı');
     }
-    
+
     console.log('Raw Gemini Response:', text);
-    
+
     // Parse JSON from response
     let jsonData;
     try {
@@ -181,7 +182,7 @@ Important:
       console.error('Raw text that failed to parse:', text);
       throw new Error(`JSON parse hatası: ${parseError.message}. Raw response: ${text.substring(0, 200)}`);
     }
-    
+
     return jsonData;
   } catch (error) {
     console.error('analyzeImageWithGemini Error:', error);
@@ -194,7 +195,7 @@ export default function SubscriptionsScreen({ navigation }) {
   const theme = themeData?.theme || defaultTheme;
   const accent = themeData?.accent || null;
   const insets = useSafeAreaInsets();
-  
+
   // Ensure theme is always available
   if (!theme || !theme.colors) {
     console.warn('Theme not available, using default theme');
@@ -207,12 +208,14 @@ export default function SubscriptionsScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showActionSheet, setShowActionSheet] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [deletingItem, setDeletingItem] = useState(null);
+  const [selectedItem, setSelectedItem] = useState(null);
 
   // Session
   useEffect(() => {
@@ -223,8 +226,30 @@ export default function SubscriptionsScreen({ navigation }) {
   }, []);
 
   // Load data
-  const loadSubscriptions = useCallback(async () => {
+  const loadSubscriptions = useCallback(async (forceRefresh = false) => {
     try {
+      // Önce cache'den kontrol et
+      if (!forceRefresh) {
+        const cachedData = getCachedSubscriptions();
+        if (cachedData) {
+          console.log('Subscriptions: Using cached data');
+          setSubscriptions(cachedData);
+          setLoading(false);
+          setRefreshing(false);
+          // Arka planda güncel veriyi al
+          supabase.auth.getUser().then(async ({ data: { user } }) => {
+            if (!user) return;
+            const { data } = await supabase
+              .from('subscriptions')
+              .select('*')
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false });
+            if (data) setSubscriptions(data);
+          }).catch(() => { });
+          return;
+        }
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
@@ -286,7 +311,7 @@ export default function SubscriptionsScreen({ navigation }) {
         .eq('id', deletingItem.id);
 
       if (error) throw error;
-      
+
       setShowDeleteModal(false);
       setDeletingItem(null);
       loadSubscriptions();
@@ -319,7 +344,7 @@ export default function SubscriptionsScreen({ navigation }) {
   const styles = useMemo(() => StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: theme.colors.background,
+      backgroundColor: 'transparent',
     },
     header: {
       paddingHorizontal: 16,
@@ -332,24 +357,43 @@ export default function SubscriptionsScreen({ navigation }) {
       justifyContent: 'space-between',
       alignItems: 'center',
     },
+    titleContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    titleIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 10,
+      backgroundColor: theme.dark ? 'rgba(255,255,255,0.05)' : '#f4f4f5',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     title: {
       fontSize: 28,
-      fontWeight: '700',
+      fontWeight: '800',
       color: theme.colors.text,
+      letterSpacing: -0.5,
     },
     addButton: {
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: theme.colors.primary,
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      borderRadius: 24,
+      paddingHorizontal: 18,
+      paddingVertical: 12,
+      borderRadius: 12,
       gap: 6,
+      shadowColor: theme.colors.primary,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.2,
+      shadowRadius: 4,
+      elevation: 3,
     },
     addButtonText: {
-      color: theme.colors.background,
-      fontWeight: '600',
-      fontSize: 14,
+      color: theme.dark ? '#000' : '#fff',
+      fontWeight: '700',
+      fontSize: 15,
     },
     searchContainer: {
       flexDirection: 'row',
@@ -369,151 +413,175 @@ export default function SubscriptionsScreen({ navigation }) {
     },
     tabContainer: {
       flexDirection: 'row',
-      backgroundColor: theme.colors.surface,
+      backgroundColor: theme.dark ? 'rgba(255,255,255,0.03)' : '#f4f4f5',
       borderRadius: 12,
       padding: 4,
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: theme.dark ? 'rgba(255,255,255,0.05)' : '#e4e4e7',
     },
     tab: {
       flex: 1,
-      paddingVertical: 10,
+      paddingVertical: 12,
       alignItems: 'center',
       borderRadius: 10,
     },
     tabActive: {
       backgroundColor: theme.colors.primary,
+      shadowColor: theme.colors.primary,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 3,
+      elevation: 2,
     },
     tabText: {
       fontSize: 14,
       fontWeight: '600',
-      color: theme.colors.textSecondary,
+      color: theme.dark ? '#a1a1aa' : '#71717a',
     },
     tabTextActive: {
-      color: theme.colors.background,
+      color: theme.dark ? '#000' : '#fff',
+      fontWeight: '700',
     },
     listContent: {
       padding: 16,
       paddingBottom: 100,
     },
     card: {
-      backgroundColor: theme.colors.surface,
+      backgroundColor: theme.dark ? 'rgba(255,255,255,0.02)' : '#fafafa',
       borderRadius: 16,
       padding: 16,
       marginBottom: 12,
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: theme.dark ? 'rgba(255,255,255,0.05)' : '#e4e4e7',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: theme.dark ? 0 : 0.05,
+      shadowRadius: 2,
+      elevation: theme.dark ? 0 : 1,
     },
-    cardHeader: {
+    cardContent: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
+      gap: 16,
     },
-    logoContainer: {
-      width: 48,
-      height: 48,
-      borderRadius: 12,
-      backgroundColor: theme.colors.background,
-      alignItems: 'center',
-      justifyContent: 'center',
-      overflow: 'hidden',
+    logoSection: {
+      flexShrink: 0,
     },
-    logo: {
-      width: 48,
-      height: 48,
+    cardMiddle: {
+      flex: 1,
+      minWidth: 0,
     },
-    logoFallback: {
-      width: 48,
-      height: 48,
-      borderRadius: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    logoFallbackText: {
+    cardTitle: {
       fontSize: 18,
       fontWeight: '700',
-      color: '#fff',
+      color: theme.dark ? '#fff' : '#18181b',
+      letterSpacing: -0.5,
     },
-    cardInfo: {
-      flex: 1,
-    },
-    cardName: {
-      fontSize: 16,
+    cardSubtitle: {
+      fontSize: 11,
       fontWeight: '600',
-      color: theme.colors.text,
-    },
-    cardMeta: {
-      fontSize: 12,
-      color: theme.colors.textSecondary,
-      marginTop: 2,
+      color: theme.dark ? '#a1a1aa' : '#71717a',
+      marginTop: 3,
       textTransform: 'uppercase',
-      letterSpacing: 0.5,
+      letterSpacing: 1,
     },
     cardRight: {
       alignItems: 'flex-end',
+      minWidth: 120,
+      flexShrink: 0,
     },
-    cardAmount: {
-      fontSize: 18,
+    amountContainer: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+    },
+    amountText: {
+      fontSize: 20,
       fontWeight: '700',
-      color: theme.colors.text,
+      color: theme.dark ? '#fff' : '#18181b',
+      fontVariant: ['tabular-nums'],
+      letterSpacing: -0.5,
     },
-    cardLinked: {
-      fontSize: 11,
-      color: theme.colors.textSecondary,
+    currencySymbol: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.dark ? '#71717a' : '#a1a1aa',
+      marginLeft: 2,
+    },
+    cardDetailsRow: {
+      height: 16,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
       marginTop: 2,
+      marginBottom: 4,
     },
-    badge: {
+    cardDetails: {
+      fontSize: 10,
+      fontWeight: '500',
+      color: theme.dark ? '#71717a' : '#a1a1aa',
+      maxWidth: 140,
+    },
+    dayBadge: {
       paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderRadius: 6,
-      marginTop: 6,
+      paddingVertical: 3,
+      borderRadius: 4,
       borderWidth: 1,
     },
-    badgeText: {
+    dayBadgeText: {
       fontSize: 10,
       fontWeight: '700',
-      letterSpacing: 0.5,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+    },
+    progressWrapper: {
+      marginTop: 8,
+      maxWidth: 240,
+    },
+    progressInfo: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+    },
+    progressLabel: {
+      fontSize: 11,
+      color: theme.dark ? '#9ca3af' : '#71717a',
+    },
+    progressBarContainer: {
+      width: '100%',
+      height: 4,
+      backgroundColor: theme.dark ? '#27272a' : '#e4e4e7',
+      borderRadius: 2,
+      overflow: 'hidden',
+    },
+    progressBarFill: {
+      height: '100%',
+      borderRadius: 2,
     },
     cardActions: {
+      position: 'absolute',
+      right: 8,
+      top: 8,
       flexDirection: 'row',
-      justifyContent: 'flex-end',
-      marginTop: 12,
-      paddingTop: 12,
-      borderTopWidth: 1,
-      borderTopColor: theme.colors.border,
-      gap: 8,
+      gap: 4,
     },
-    actionButton: {
-      width: 36,
-      height: 36,
+    editButton: {
+      width: 40,
+      height: 40,
       borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: theme.colors.background,
+      backgroundColor: theme.dark ? 'rgba(39,39,42,0.8)' : 'rgba(228,228,231,0.8)',
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: theme.dark ? 'rgba(63,63,70,0.5)' : 'rgba(212,212,216,0.5)',
     },
-    progressContainer: {
-      marginTop: 12,
-    },
-    progressHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: 6,
-    },
-    progressText: {
-      fontSize: 12,
-      color: theme.colors.textSecondary,
-    },
-    progressBar: {
-      height: 6,
-      backgroundColor: theme.colors.background,
-      borderRadius: 3,
-      overflow: 'hidden',
-    },
-    progressFill: {
-      height: '100%',
-      borderRadius: 3,
+    deleteButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(239,68,68,0.1)',
+      borderWidth: 1,
+      borderColor: 'rgba(239,68,68,0.2)',
     },
     emptyContainer: {
       flex: 1,
@@ -559,104 +627,128 @@ export default function SubscriptionsScreen({ navigation }) {
     },
   }), [theme]);
 
-  // Render subscription card
+  // Handle long press to show action sheet
+  const handleLongPress = (item) => {
+    setSelectedItem(item);
+    setShowActionSheet(true);
+  };
+
+  // Render subscription card (Web-style design)
   const renderCard = ({ item }) => {
     const isLoan = item.type === 'loan';
     const isCompleted = item.status === 'completed';
     const badgeConfig = getBadgeConfig(item.daysLeft, isCompleted);
     const brand = isLoan ? getBankInfo(item.name) : getServiceInfo(item.name);
-    
+
     const loanProgress = isLoan && item.total_installments
       ? ((item.paid_installments || 0) / item.total_installments) * 100
       : 0;
 
+    // Format amount properly
+    const formattedAmount = item.amount.toLocaleString('tr-TR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
     return (
-      <View style={[
-        styles.card,
-        isCompleted && { borderColor: 'rgba(34, 197, 94, 0.3)', backgroundColor: 'rgba(34, 197, 94, 0.05)' }
-      ]}>
-        <View style={styles.cardHeader}>
-          {/* Logo */}
-          <ServiceLogo 
-            brand={brand}
-            fallbackText={item.name}
-            size="md"
-            style={styles.logoContainer}
-          />
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onLongPress={() => handleLongPress(item)}
+        delayLongPress={300}
+        style={[
+          styles.card,
+          isCompleted && {
+            borderColor: 'rgba(34, 197, 94, 0.2)',
+            backgroundColor: 'rgba(34, 197, 94, 0.05)'
+          }
+        ]}
+      >
+        <View style={styles.cardContent}>
+          {/* Sol: Logo (48x48) */}
+          <View style={styles.logoSection}>
+            <ServiceLogo
+              brand={brand}
+              fallbackText={item.name}
+              size="md"
+            />
+          </View>
 
-          {/* Info */}
-          <View style={styles.cardInfo}>
+          {/* Orta: Bilgiler */}
+          <View style={styles.cardMiddle}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={styles.cardName} numberOfLines={1}>{item.name}</Text>
-              {isCompleted && <CheckCircle2 size={16} color="#22c55e" />}
+              <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+              {isCompleted && <CheckCircle2 size={20} color="#22c55e" />}
             </View>
-            <Text style={styles.cardMeta}>
+            <Text style={styles.cardSubtitle}>
               {isLoan ? 'KREDİ' : 'ABONELİK'} • {item.billing_cycle === 'monthly' ? 'AYLIK' : 'YILLIK'}
+              {isCompleted && ' • TAMAMLANDI'}
             </Text>
-          </View>
 
-          {/* Amount & Badge */}
-          <View style={styles.cardRight}>
-            <Text style={styles.cardAmount}>
-              -{formatCurrency(item.amount)}
-            </Text>
-            {item.linked_card_details && (
-              <Text style={styles.cardLinked} numberOfLines={1}>
-                {item.linked_card_details}
-              </Text>
+            {/* Loan Progress */}
+            {isLoan && item.total_installments && (
+              <View style={styles.progressWrapper}>
+                <View style={styles.progressInfo}>
+                  <Text style={[
+                    styles.progressLabel,
+                    isCompleted && { color: '#22c55e', fontWeight: '600' }
+                  ]}>
+                    {item.paid_installments || 0} / {item.total_installments} taksit
+                  </Text>
+                  <Text style={[
+                    styles.progressLabel,
+                    isCompleted && { color: '#22c55e', fontWeight: '600' }
+                  ]}>
+                    %{loanProgress.toFixed(0)}
+                  </Text>
+                </View>
+                <View style={styles.progressBarContainer}>
+                  <View
+                    style={[
+                      styles.progressBarFill,
+                      {
+                        width: `${loanProgress}%`,
+                        backgroundColor: isCompleted ? '#22c55e' : (theme.dark ? '#9ca3af' : '#71717a')
+                      }
+                    ]}
+                  />
+                </View>
+              </View>
             )}
-            <View style={[
-              styles.badge,
-              { backgroundColor: badgeConfig.bg, borderColor: badgeConfig.border }
-            ]}>
-              <Text style={[styles.badgeText, { color: badgeConfig.text }]}>
-                {badgeConfig.label}
-              </Text>
+          </View>
+
+          {/* Sağ: Tutar & Badge */}
+          <View style={styles.cardRight}>
+            {/* Tutar */}
+            <View style={styles.amountContainer}>
+              <Text style={styles.amountText}>-{formattedAmount}</Text>
+              <Text style={styles.currencySymbol}>₺</Text>
+            </View>
+
+            {/* Kart Bilgisi */}
+            <View style={styles.cardDetailsRow}>
+              {item.linked_card_details ? (
+                <Text style={styles.cardDetails} numberOfLines={1}>
+                  {item.linked_card_details}
+                </Text>
+              ) : (
+                <View style={{ height: 14 }} />
+              )}
+            </View>
+
+            {/* Gün Badge'i */}
+            <View style={{ alignItems: 'flex-end' }}>
+              <View style={[
+                styles.dayBadge,
+                { backgroundColor: badgeConfig.bg, borderColor: badgeConfig.border }
+              ]}>
+                <Text style={[styles.dayBadgeText, { color: badgeConfig.text }]}>
+                  {badgeConfig.label}
+                </Text>
+              </View>
             </View>
           </View>
         </View>
-
-        {/* Loan Progress */}
-        {isLoan && item.total_installments && (
-          <View style={styles.progressContainer}>
-            <View style={styles.progressHeader}>
-              <Text style={[styles.progressText, isCompleted && { color: '#22c55e', fontWeight: '600' }]}>
-                {item.paid_installments || 0} / {item.total_installments} taksit
-              </Text>
-              <Text style={[styles.progressText, isCompleted && { color: '#22c55e', fontWeight: '600' }]}>
-                %{loanProgress.toFixed(0)}
-              </Text>
-            </View>
-            <View style={styles.progressBar}>
-              <View 
-                style={[
-                  styles.progressFill, 
-                  { 
-                    width: `${loanProgress}%`,
-                    backgroundColor: isCompleted ? '#22c55e' : theme.colors.primary 
-                  }
-                ]} 
-              />
-            </View>
-          </View>
-        )}
-
-        {/* Actions */}
-        <View style={styles.cardActions}>
-          <TouchableOpacity 
-            style={styles.actionButton}
-            onPress={() => handleEdit(item)}
-          >
-            <Edit2 size={16} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.actionButton, { borderColor: 'rgba(239, 68, 68, 0.3)' }]}
-            onPress={() => handleDeletePress(item)}
-          >
-            <Trash2 size={16} color="#ef4444" />
-          </TouchableOpacity>
-        </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -671,7 +763,7 @@ export default function SubscriptionsScreen({ navigation }) {
         )}
       </View>
       <Text style={styles.emptyTitle}>
-        {searchQuery.trim() 
+        {searchQuery.trim()
           ? 'Sonuç bulunamadı'
           : activeTab === 'subscriptions'
             ? 'Henüz abonelik eklenmedi'
@@ -687,7 +779,7 @@ export default function SubscriptionsScreen({ navigation }) {
         }
       </Text>
       {!searchQuery.trim() && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.emptyButton}
           onPress={() => setShowAddModal(true)}
         >
@@ -705,12 +797,17 @@ export default function SubscriptionsScreen({ navigation }) {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.titleRow}>
-          <Text style={styles.title}>Harcama Takibi</Text>
-          <TouchableOpacity 
+          <View style={styles.titleContainer}>
+            <View style={styles.titleIcon}>
+              <CreditCard size={22} color={theme.colors.primary} />
+            </View>
+            <Text style={styles.title}>Harcama Takibi</Text>
+          </View>
+          <TouchableOpacity
             style={styles.addButton}
             onPress={() => setShowAddModal(true)}
           >
-            <Plus size={18} color={theme.colors.background} />
+            <Plus size={20} color={theme.dark ? '#000' : '#fff'} />
             <Text style={styles.addButtonText}>Ekle</Text>
           </TouchableOpacity>
         </View>
@@ -799,6 +896,162 @@ export default function SubscriptionsScreen({ navigation }) {
         onConfirm={handleDelete}
         theme={theme}
       />
+
+      {/* Action Sheet Modal */}
+      <Modal
+        visible={showActionSheet}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowActionSheet(false)}
+      >
+        <TouchableOpacity
+          style={{
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            justifyContent: 'flex-end',
+          }}
+          activeOpacity={1}
+          onPress={() => setShowActionSheet(false)}
+        >
+          <View style={{
+            backgroundColor: theme.colors.background,
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            paddingBottom: 34,
+            paddingTop: 8,
+          }}>
+            {/* Handle bar */}
+            <View style={{
+              width: 36,
+              height: 4,
+              backgroundColor: theme.dark ? '#52525b' : '#d4d4d8',
+              borderRadius: 2,
+              alignSelf: 'center',
+              marginBottom: 16,
+            }} />
+
+            {/* Selected item info */}
+            {selectedItem && (
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingHorizontal: 20,
+                paddingBottom: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: theme.colors.border,
+                marginBottom: 8,
+              }}>
+                <ServiceLogo
+                  brand={selectedItem.type === 'loan'
+                    ? getBankInfo(selectedItem.name)
+                    : getServiceInfo(selectedItem.name)}
+                  fallbackText={selectedItem.name}
+                  size="sm"
+                />
+                <View style={{ marginLeft: 12, flex: 1 }}>
+                  <Text style={{
+                    fontSize: 16,
+                    fontWeight: '600',
+                    color: theme.colors.text,
+                  }}>{selectedItem.name}</Text>
+                  <Text style={{
+                    fontSize: 13,
+                    color: theme.colors.textSecondary,
+                    marginTop: 2,
+                  }}>
+                    {selectedItem.amount.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Edit button */}
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingVertical: 14,
+                paddingHorizontal: 20,
+              }}
+              onPress={() => {
+                setShowActionSheet(false);
+                if (selectedItem) {
+                  handleEdit(selectedItem);
+                }
+              }}
+            >
+              <View style={{
+                width: 40,
+                height: 40,
+                borderRadius: 10,
+                backgroundColor: theme.dark ? 'rgba(59, 130, 246, 0.15)' : 'rgba(59, 130, 246, 0.1)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginRight: 14,
+              }}>
+                <Edit2 size={20} color="#3b82f6" />
+              </View>
+              <Text style={{
+                fontSize: 16,
+                fontWeight: '500',
+                color: theme.colors.text,
+              }}>Düzenle</Text>
+            </TouchableOpacity>
+
+            {/* Delete button */}
+            <TouchableOpacity
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingVertical: 14,
+                paddingHorizontal: 20,
+              }}
+              onPress={() => {
+                setShowActionSheet(false);
+                if (selectedItem) {
+                  handleDeletePress(selectedItem);
+                }
+              }}
+            >
+              <View style={{
+                width: 40,
+                height: 40,
+                borderRadius: 10,
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginRight: 14,
+              }}>
+                <Trash2 size={20} color="#ef4444" />
+              </View>
+              <Text style={{
+                fontSize: 16,
+                fontWeight: '500',
+                color: '#ef4444',
+              }}>Sil</Text>
+            </TouchableOpacity>
+
+            {/* Cancel button */}
+            <TouchableOpacity
+              style={{
+                marginTop: 8,
+                marginHorizontal: 20,
+                paddingVertical: 14,
+                borderRadius: 12,
+                backgroundColor: theme.dark ? 'rgba(255,255,255,0.05)' : '#f4f4f5',
+                alignItems: 'center',
+              }}
+              onPress={() => setShowActionSheet(false)}
+            >
+              <Text style={{
+                fontSize: 16,
+                fontWeight: '600',
+                color: theme.colors.text,
+              }}>İptal</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -836,7 +1089,7 @@ function AddEditModal({ visible, onClose, onSuccess, editData, type, theme }) {
           linked_card_details: editData.linked_card_details || '',
           current_installment: editData.paid_installments?.toString() || '1',
           total_installments: editData.total_installments?.toString() || '',
-          start_date: editData.start_date 
+          start_date: editData.start_date
             ? new Date(editData.start_date).toISOString().split('T')[0]
             : new Date().toISOString().split('T')[0],
         });
@@ -873,17 +1126,17 @@ function AddEditModal({ visible, onClose, onSuccess, editData, type, theme }) {
 
       if (!result.canceled && result.assets[0]) {
         const base64Data = result.assets[0].base64;
-        
+
         if (!base64Data) {
           Alert.alert('Hata', 'Fotoğraf base64 formatına dönüştürülemedi.');
           return;
         }
-        
+
         setAnalyzing(true);
 
         try {
           const aiData = await analyzeImageWithGemini(base64Data);
-          
+
           if (aiData) {
             setFormData(prev => ({
               ...prev,
@@ -1108,16 +1361,16 @@ function AddEditModal({ visible, onClose, onSuccess, editData, type, theme }) {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.modalOverlay}
       >
-        <TouchableOpacity 
-          style={{ flex: 1 }} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={{ flex: 1 }}
+          activeOpacity={1}
           onPress={onClose}
         />
         <View style={styles.modalContent}>
           {/* Header */}
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>
-              {isEditMode 
+              {isEditMode
                 ? (isLoan ? 'Krediyi Düzenle' : 'Aboneliği Düzenle')
                 : (isLoan ? 'Yeni Kredi' : 'Yeni Abonelik')
               }
@@ -1128,154 +1381,154 @@ function AddEditModal({ visible, onClose, onSuccess, editData, type, theme }) {
           </View>
 
           {/* Scrollable Form */}
-          <ScrollView 
-             style={{ flex: 1 }}
-             contentContainerStyle={styles.formContent}
-             showsVerticalScrollIndicator={false}
-             keyboardShouldPersistTaps="handled"
-           >
-             {/* Mini Upload Zone */}
-             {!isEditMode && (
-                <TouchableOpacity 
-                  style={[
-                    styles.miniUploadZone, 
-                    analyzing && { opacity: 0.7 },
-                    savedSuccessfully && { borderColor: '#22c55e', backgroundColor: '#f0fdf4' }
-                  ]} 
-                  onPress={pickImage}
-                  disabled={analyzing}
-                >
-                  {analyzing ? (
-                    <>
-                      <Loader2 size={20} color={theme.colors.primary} />
-                      <Text style={styles.miniUploadText}>Analiz ediliyor...</Text>
-                    </>
-                  ) : savedSuccessfully ? (
-                    <>
-                      <CheckCircle2 size={20} color="#22c55e" />
-                      <Text style={[styles.miniUploadText, { color: '#22c55e' }]}>Bilgiler dolduruldu</Text>
-                    </>
-                  ) : (
-                    <>
-                      <Upload size={20} color={theme.colors.primary} />
-                      <Text style={styles.miniUploadText}>AI İle Analiz Et</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-             )}
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.formContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Mini Upload Zone */}
+            {!isEditMode && (
+              <TouchableOpacity
+                style={[
+                  styles.miniUploadZone,
+                  analyzing && { opacity: 0.7 },
+                  savedSuccessfully && { borderColor: '#22c55e', backgroundColor: '#f0fdf4' }
+                ]}
+                onPress={pickImage}
+                disabled={analyzing}
+              >
+                {analyzing ? (
+                  <>
+                    <Loader2 size={20} color={theme.colors.primary} />
+                    <Text style={styles.miniUploadText}>Analiz ediliyor...</Text>
+                  </>
+                ) : savedSuccessfully ? (
+                  <>
+                    <CheckCircle2 size={20} color="#22c55e" />
+                    <Text style={[styles.miniUploadText, { color: '#22c55e' }]}>Bilgiler dolduruldu</Text>
+                  </>
+                ) : (
+                  <>
+                    <Upload size={20} color={theme.colors.primary} />
+                    <Text style={styles.miniUploadText}>AI İle Analiz Et</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
 
-             {/* Name */}
-             <View style={styles.inputGroup}>
-               <Text style={styles.label}>{isLoan ? 'Kurum Adı' : 'Servis Adı'}</Text>
-               <View style={styles.nameRow}>
-                 <TextInput
-                   style={[styles.input, { flex: 1 }]}
-                   placeholder={isLoan ? 'Örn: Garanti BBVA' : 'Örn: Netflix'}
-                   placeholderTextColor={theme.colors.muted}
-                   value={formData.name}
-                   onChangeText={text => setFormData(prev => ({ ...prev, name: text }))}
-                 />
-                 <ServiceLogo
-                   brand={brand}
-                   fallbackText={formData.name || '?'}
-                   size="md"
-                   style={styles.logoPreview}
-                 />
-               </View>
-             </View>
+            {/* Name */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>{isLoan ? 'Kurum Adı' : 'Servis Adı'}</Text>
+              <View style={styles.nameRow}>
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder={isLoan ? 'Örn: Garanti BBVA' : 'Örn: Netflix'}
+                  placeholderTextColor={theme.colors.muted}
+                  value={formData.name}
+                  onChangeText={text => setFormData(prev => ({ ...prev, name: text }))}
+                />
+                <ServiceLogo
+                  brand={brand}
+                  fallbackText={formData.name || '?'}
+                  size="md"
+                  style={styles.logoPreview}
+                />
+              </View>
+            </View>
 
-             {/* Amount & Payment Date Row */}
-             <View style={styles.inputGroup}>
-               <View style={styles.inputRow}>
-                 <View style={styles.inputFlex}>
-                   <Text style={styles.label}>{isLoan ? 'Taksit Tutarı' : 'Tutar'}</Text>
-                   <TextInput
-                     style={styles.input}
-                     placeholder="0.00"
-                     placeholderTextColor={theme.colors.muted}
-                     keyboardType="decimal-pad"
-                     value={formData.amount}
-                     onChangeText={text => setFormData(prev => ({ ...prev, amount: text }))}
-                   />
-                 </View>
-                 <View style={styles.inputFlex}>
-                   <Text style={styles.label}>Ödeme Günü</Text>
-                   <TextInput
-                     style={styles.input}
-                     placeholder="1-31"
-                     placeholderTextColor={theme.colors.muted}
-                     keyboardType="number-pad"
-                     maxLength={2}
-                     value={formData.payment_date}
-                     onChangeText={text => setFormData(prev => ({ ...prev, payment_date: text }))}
-                   />
-                 </View>
-               </View>
-             </View>
+            {/* Amount & Payment Date Row */}
+            <View style={styles.inputGroup}>
+              <View style={styles.inputRow}>
+                <View style={styles.inputFlex}>
+                  <Text style={styles.label}>{isLoan ? 'Taksit Tutarı' : 'Tutar'}</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="0.00"
+                    placeholderTextColor={theme.colors.muted}
+                    keyboardType="decimal-pad"
+                    value={formData.amount}
+                    onChangeText={text => setFormData(prev => ({ ...prev, amount: text }))}
+                  />
+                </View>
+                <View style={styles.inputFlex}>
+                  <Text style={styles.label}>Ödeme Günü</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="1-31"
+                    placeholderTextColor={theme.colors.muted}
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    value={formData.payment_date}
+                    onChangeText={text => setFormData(prev => ({ ...prev, payment_date: text }))}
+                  />
+                </View>
+              </View>
+            </View>
 
-             {/* Loan Installments Row */}
-             {isLoan && (
-               <View style={styles.inputGroup}>
-                 <View style={styles.inputRow}>
-                   <View style={styles.inputFlex}>
-                     <Text style={styles.label}>Mevcut Taksit</Text>
-                     <TextInput
-                       style={styles.input}
-                       placeholder="1"
-                       placeholderTextColor={theme.colors.muted}
-                       keyboardType="number-pad"
-                       value={formData.current_installment}
-                       onChangeText={text => setFormData(prev => ({ ...prev, current_installment: text }))}
-                     />
-                   </View>
-                   <View style={styles.inputFlex}>
-                     <Text style={styles.label}>Toplam Taksit</Text>
-                     <TextInput
-                       style={styles.input}
-                       placeholder="12"
-                       placeholderTextColor={theme.colors.muted}
-                       keyboardType="number-pad"
-                       value={formData.total_installments}
-                       onChangeText={text => setFormData(prev => ({ ...prev, total_installments: text }))}
-                     />
-                   </View>
-                 </View>
-               </View>
-             )}
+            {/* Loan Installments Row */}
+            {isLoan && (
+              <View style={styles.inputGroup}>
+                <View style={styles.inputRow}>
+                  <View style={styles.inputFlex}>
+                    <Text style={styles.label}>Mevcut Taksit</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="1"
+                      placeholderTextColor={theme.colors.muted}
+                      keyboardType="number-pad"
+                      value={formData.current_installment}
+                      onChangeText={text => setFormData(prev => ({ ...prev, current_installment: text }))}
+                    />
+                  </View>
+                  <View style={styles.inputFlex}>
+                    <Text style={styles.label}>Toplam Taksit</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="12"
+                      placeholderTextColor={theme.colors.muted}
+                      keyboardType="number-pad"
+                      value={formData.total_installments}
+                      onChangeText={text => setFormData(prev => ({ ...prev, total_installments: text }))}
+                    />
+                  </View>
+                </View>
+              </View>
+            )}
 
-             {/* Linked Card */}
-             <View style={styles.inputGroup}>
-               <Text style={styles.label}>Bağlı Kart / Hesap (Opsiyonel)</Text>
-               <TextInput
-                 style={styles.input}
-                 placeholder="Örn: Bonus **** 1234"
-                 placeholderTextColor={theme.colors.muted}
-                 value={formData.linked_card_details}
-                 onChangeText={text => setFormData(prev => ({ ...prev, linked_card_details: text }))}
-               />
-             </View>
-           </ScrollView>
+            {/* Linked Card */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Bağlı Kart / Hesap (Opsiyonel)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Örn: Bonus **** 1234"
+                placeholderTextColor={theme.colors.muted}
+                value={formData.linked_card_details}
+                onChangeText={text => setFormData(prev => ({ ...prev, linked_card_details: text }))}
+              />
+            </View>
+          </ScrollView>
 
-           {/* Fixed Footer with Buttons */}
-           <View style={styles.footer}>
-             <TouchableOpacity
-               style={styles.submitButton}
-               onPress={handleSubmit}
-               disabled={saving}
-             >
-               {saving ? (
-                 <ActivityIndicator color={theme.colors.background} />
-               ) : (
-                 <Text style={styles.submitButtonText}>
-                   {isEditMode ? 'Güncelle' : 'Kaydet'}
-                 </Text>
-               )}
-             </TouchableOpacity>
+          {/* Fixed Footer with Buttons */}
+          <View style={styles.footer}>
+            <TouchableOpacity
+              style={styles.submitButton}
+              onPress={handleSubmit}
+              disabled={saving}
+            >
+              {saving ? (
+                <ActivityIndicator color={theme.colors.background} />
+              ) : (
+                <Text style={styles.submitButtonText}>
+                  {isEditMode ? 'Güncelle' : 'Kaydet'}
+                </Text>
+              )}
+            </TouchableOpacity>
 
-             <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
-               <Text style={styles.cancelButtonText}>Vazgeç</Text>
-             </TouchableOpacity>
-           </View>
+            <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
+              <Text style={styles.cancelButtonText}>Vazgeç</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -1394,7 +1647,7 @@ function DeleteModal({ visible, item, onClose, onConfirm, theme }) {
           <Text style={styles.title}>
             {item.type === 'subscription' ? 'Aboneliği Sil' : 'Krediyi Sil'}
           </Text>
-          
+
           <Text style={styles.message}>
             Bu {item.type === 'subscription' ? 'aboneliği' : 'krediyi'} silmek istediğinizden emin misiniz?
           </Text>

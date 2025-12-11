@@ -18,6 +18,8 @@ import { useAppTheme } from '../lib/theme';
 import { useToast } from '../lib/toast';
 import { usePrefs } from '../lib/prefs';
 import { useConfirm } from '../lib/confirm';
+import { getBankInfo } from '../lib/serviceIcons';
+import ServiceLogo from '../components/ServiceLogo';
 
 import IbanActionSheet from '../components/IbanActionSheet';
 import IbanEditModal from '../components/IbanEditModal';
@@ -515,10 +517,18 @@ const IbansScreen = () => {
                 onPress={() => handleIbanPress(iban)}
                 activeOpacity={0.7}
               >
-                {/* Bank Badge */}
-                <View style={styles.bankBadge}>
-                  <Text style={styles.bankBadgeText}>{bankInitials(iban.bank)}</Text>
-                </View>
+                {/* Bank Badge / Logo */}
+                {getBankInfo(iban.bank) ? (
+                  <ServiceLogo
+                    brand={getBankInfo(iban.bank)}
+                    fallbackText={bankInitials(iban.bank)}
+                    size="sm"
+                  />
+                ) : (
+                  <View style={styles.bankBadge}>
+                    <Text style={styles.bankBadgeText}>{bankInitials(iban.bank)}</Text>
+                  </View>
+                )}
 
                 {/* IBAN Info */}
                 <View style={styles.ibanInfo}>

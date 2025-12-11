@@ -1,6 +1,10 @@
 {
   "expo": {
-    "scheme": "com.keeperapp.test",
+    "scheme": [
+      "keeper",
+      "kisiselnot",
+      "com.keeperapp.test"
+    ],
     "name": "Keeper",
     "slug": "test",
     "version": "1.0.0",
@@ -19,11 +23,19 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#f1f1f2"
+        "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.keeperapp.test",
       "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.USE_EXACT_ALARM",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK"
+      ],
       "intentFilters": [
         {
           "action": "VIEW",
@@ -32,12 +44,23 @@
               "scheme": "kisiselnot"
             },
             {
+              "scheme": "keeper"
+            },
+            {
               "scheme": "https",
               "host": "kisiselnotkasasi.page.link",
               "pathPrefix": "/"
+            },
+            {
+              "scheme": "https",
+              "host": "ardakaratas.com.tr",
+              "pathPrefix": "/auth"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -50,7 +73,7 @@
       },
       "resetRedirectBase": "https://ardakaratas.com.tr"
     },
-   "plugins": [
+    "plugins": [
       [
         "expo-notifications",
         {
@@ -75,6 +98,6 @@
       "./plugins/withAndroidManifestFix.js",
       "expo-web-browser"
     ],
-    "owner": "keeperapp"
+    "owner": "ardkaratas"
   }
 }
