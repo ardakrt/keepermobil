@@ -98,6 +98,8 @@
       "@react-native-google-signin/google-signin",
       "expo-secure-store",
       "./plugins/withAndroidManifestFix.js",
+      "./plugins/withNotificationIcon.js",
+      "./plugins/withNotificationResources.js",
       "expo-web-browser"
     ],
     "owner": "ardkaratas"
