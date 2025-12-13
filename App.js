@@ -58,6 +58,27 @@ import { localAuth } from './lib/localAuth';
 import { prefetchAllData, clearPrefetchCache, restorePrefetchCache } from './lib/prefetchService';
 
 // Setup - High importance channel for bypassing battery optimization
+// Background Message Handler (Uygulama kapalıyken çalışır)
+messaging().setBackgroundMessageHandler(async remoteMessage => {
+  console.log('Background FCM Message:', remoteMessage);
+
+  if (remoteMessage.data?.type === 'login_request') {
+    // Mobil Onay İsteği - Butonlu Bildirim Göster 🚀
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: remoteMessage.data.title,
+        body: remoteMessage.data.body,
+        data: remoteMessage.data,
+        categoryIdentifier: 'LOGIN_REQUEST', // App.js veya PushAuthContext içinde tanımlı kategori
+        sound: true,
+        priority: Notifications.AndroidNotificationPriority.MAX,
+        vibrate: [0, 250, 250, 250],
+      },
+      trigger: null,
+    });
+  }
+});
+
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     // Don't show LOGIN_REQUEST notifications when app is in foreground
@@ -623,7 +644,20 @@ function AppInner() {
     return () => sub.remove?.();
   }, [handleDeepLink]);
 
-  const handleNavigationData = useCallback((data) => {
+  const handleNavigationData = useCallback(async (data) => {
+    console.log('📱 handleNavigationData called with:', data);
+
+    // Login request bildirimi - AsyncStorage'a kaydet, PushAuthContext okuyacak
+    if (data?.type === 'login_request' && data?.requestId) {
+      console.log('📱 Login request notification tapped, requestId:', data.requestId);
+      try {
+        await AsyncStorage.setItem('PENDING_LOGIN_REQUEST_ID', data.requestId);
+      } catch (e) {
+        console.warn('Failed to save pending login request', e);
+      }
+      return;
+    }
+
     if (!data || !data.screen) return;
     const params = { ...(data.reminderId ? { reminderId: data.reminderId } : {}) };
     params.pulseHeaderKey = Date.now();
@@ -633,6 +667,13 @@ function AppInner() {
   useEffect(() => {
     const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
       const { title, body } = notification.request.content;
+      const data = notification.request.content.data;
+
+      // Login request ise Toast gösterme, çünkü PushAuthModal açılacak (veya açıldı)
+      if (data?.type === 'login_request' || data?.categoryIdentifier === 'LOGIN_REQUEST' || data?.requestId) {
+        return;
+      }
+
       if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current);
       showToast(title ?? 'Yeni bildirim', body ?? 'Bir hatırlatma alındı.', 4000);
     });
@@ -653,6 +694,11 @@ function AppInner() {
 
   useEffect(() => {
     const unsubscribeOnMessage = messaging().onMessage(async (remoteMessage) => {
+      // Login request ise Toast gösterme
+      if (remoteMessage?.data?.type === 'login_request' || remoteMessage?.data?.requestId) {
+        return;
+      }
+
       const title = remoteMessage.notification?.title ?? remoteMessage.data?.title ?? 'Firebase bildirimi';
       const body = remoteMessage.notification?.body ?? remoteMessage.data?.body ?? '';
       if (bannerTimeoutRef.current) clearTimeout(bannerTimeoutRef.current);
@@ -728,19 +774,164 @@ function AppInner() {
     }
   }, [userId]);
 
-  const saveFirebaseToken = useCallback(async (token) => {
-    if (!userId || !token) return;
-    try {
-      const { data: existing, error: fetchError } = await supabase.from('user_tokens').select('expo_token').eq('user_id', userId).maybeSingle();
-      if (fetchError) throw fetchError;
-      const payload = { user_id: userId, updated_at: new Date().toISOString(), expo_token: existing?.expo_token ?? token, firebase_token: token };
-      const { error: upsertError } = await supabase.from('user_tokens').upsert(payload);
-      if (upsertError) throw upsertError;
-    } catch (err) {
-      console.warn('Firebase token kaydedilemedi. user_tokens tablosunda firebase_token kolonunun olduğundan emin olun.', err?.message ?? err);
-      await saveExpoToken(token);
+  const saveFirebaseToken = useCallback(async (token, overrideUserId = null) => {
+    // userId prop'dan veya override'dan al
+    let targetUserId = overrideUserId || userId;
+    let tempSessionSet = false;
+
+    console.log('🔥 saveFirebaseToken called, userId:', userId ? 'exists' : 'null', 'override:', overrideUserId ? 'exists' : 'null');
+
+    // userId prop yoksa (PIN girilmemiş), PIN session'dan Supabase auth aç
+    // overrideUserId olsa bile session açmamız gerekiyor, yoksa RLS hatası alırız
+    if (!userId) {
+      try {
+        const pinSessionRaw = await SecureStore.getItemAsync(PIN_SESSION_KEY);
+        console.log('🔥 PIN session raw exists:', !!pinSessionRaw);
+
+        if (pinSessionRaw) {
+          const pinSession = JSON.parse(pinSessionRaw);
+
+          // Eğer targetUserId yoksa, PIN session'dan al
+          if (!targetUserId) {
+            targetUserId = pinSession?.user?.id;
+            console.log('🔥 targetUserId from PIN session:', targetUserId ? targetUserId.substring(0, 8) + '...' : 'null');
+          }
+
+          // RLS için geçici Supabase oturumu aç
+          if (pinSession?.access_token && pinSession?.refresh_token) {
+            console.log('🔐 Setting temporary Supabase session for Firebase token save...');
+
+            // Önce refresh_token ile yeni session almayı dene (token expire olmuş olabilir)
+            let sessionSuccess = false;
+            let validSession = null;
+
+            const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession({
+              refresh_token: pinSession.refresh_token,
+            });
+
+            if (refreshError) {
+              console.warn('🔐 refreshSession failed:', refreshError.message);
+              // Fallback: setSession dene
+              const { data, error } = await supabase.auth.setSession({
+                access_token: pinSession.access_token,
+                refresh_token: pinSession.refresh_token,
+              });
+
+              if (error) {
+                console.warn('🔐 setSession also failed:', error.message);
+              } else {
+                sessionSuccess = !!data?.session;
+                validSession = data?.session;
+              }
+            } else {
+              console.log('🔐 refreshSession success!');
+
+              // Yeni tokenları PIN session'a kaydet
+              if (refreshData?.session) {
+                validSession = refreshData.session;
+
+                try {
+                  await SecureStore.setItemAsync(PIN_SESSION_KEY, JSON.stringify({
+                    access_token: refreshData.session.access_token,
+                    refresh_token: refreshData.session.refresh_token,
+                    user: { id: refreshData.session.user?.id, email: refreshData.session.user?.email }
+                  }));
+                  console.log('🔐 Updated PIN session with new tokens');
+                } catch (e) {
+                  console.warn('Failed to update PIN session', e);
+                }
+
+                // Session'ı tekrar açıkça set et (onAuthStateChange tarafından temizlenmiş olabilir)
+                console.log('🔐 Re-setting session explicitly...');
+                const { error: setError } = await supabase.auth.setSession({
+                  access_token: refreshData.session.access_token,
+                  refresh_token: refreshData.session.refresh_token,
+                });
+
+                if (setError) {
+                  console.warn('🔐 Re-setSession failed:', setError.message);
+                } else {
+                  sessionSuccess = true;
+                  console.log('🔐 Session re-set successfully');
+                }
+              }
+            }
+
+            console.log('🔐 Session result:', sessionSuccess ? 'SUCCESS' : 'FAILED');
+
+            if (sessionSuccess) {
+              tempSessionSet = true;
+              // Session'ı doğrula
+              const { data: sessionData } = await supabase.auth.getSession();
+              console.log('🔐 Current session after setup:', !!sessionData?.session);
+            }
+          } else {
+            console.warn('🔐 No access_token or refresh_token in PIN session');
+          }
+        }
+      } catch (e) {
+        console.warn('Could not get userId from PIN session', e);
+      }
     }
-  }, [saveExpoToken, userId]);
+
+    if (!targetUserId || !token) {
+      console.warn('saveFirebaseToken: No userId or token available');
+      return;
+    }
+
+    try {
+      console.log('🔥 Attempting to save Firebase token for user:', targetUserId);
+
+      // Session'ı doğrula
+      const { data: currentSession } = await supabase.auth.getSession();
+      console.log('🔥 Session before DB operation:', !!currentSession?.session, 'uid:', currentSession?.session?.user?.id?.substring(0, 8) || 'none');
+
+      const { data: existing, error: fetchError } = await supabase.from('user_tokens').select('*').eq('user_id', targetUserId).maybeSingle();
+      if (fetchError) {
+        console.warn('🔥 Fetch existing error:', fetchError.message);
+        throw fetchError;
+      }
+      console.log('🔥 Existing record:', existing ? 'found' : 'not found');
+
+      const now = new Date().toISOString();
+
+      if (existing) {
+        // UPDATE
+        console.log('🔥 Updating existing token...');
+        const { error: updateError } = await supabase
+          .from('user_tokens')
+          .update({ firebase_token: token, updated_at: now })
+          .eq('user_id', targetUserId);
+
+        if (updateError) {
+          console.warn('🔥 Update error:', updateError.message);
+          throw updateError;
+        }
+        console.log('✅ Firebase token updated for user:', targetUserId);
+      } else {
+        // INSERT
+        console.log('🔥 Inserting new token...');
+        const { error: insertError } = await supabase
+          .from('user_tokens')
+          .insert({ user_id: targetUserId, expo_token: token, firebase_token: token, updated_at: now });
+
+        if (insertError) {
+          console.warn('🔥 Insert error:', insertError.message);
+          throw insertError;
+        }
+        console.log('✅ Firebase token inserted for user:', targetUserId);
+      }
+    } catch (err) {
+      console.warn('Firebase token kaydedilemedi:', err?.message ?? err);
+    } finally {
+      // Eğer geçici session açtıysak, UI durumunu bozmamak için session'ı temizleme
+      // (auth state listener zaten bunu handle edecek)
+      if (tempSessionSet) {
+        console.log('🔐 Temporary session was used for token save');
+        // Session'ı silmiyoruz çünkü PIN doğrulaması sonrası tekrar set edilecek
+      }
+    }
+  }, [userId]);
 
   const registerFirebaseMessaging = useCallback(async () => {
     try {
@@ -775,25 +966,64 @@ function AppInner() {
     return () => { isMounted = false; };
   }, [registerForPushNotificationsAsync, saveExpoToken, userId]);
 
+  // Firebase token kaydı - uygulama başlangıcında ve userId değişiminde çalışır
   useEffect(() => {
-    if (!userId) {
-      setFirebaseToken(null);
-      return;
-    }
+    // userId yoksa bile PIN session varsa Firebase token kaydet
+    // Bu sayede PIN ekranındayken bile bildirimler alınabilir
     let isMounted = true;
     let unsubscribeRefresh = () => undefined;
-    (async () => {
+
+    const initFirebaseToken = async () => {
+      console.log('🔥 Firebase token init started, userId:', userId ? 'exists' : 'null');
+
+      // userId yoksa PIN session kontrol et
+      let shouldRegister = !!userId;
+      let pinUserId = null;
+
+      if (!userId) {
+        try {
+          const pinSessionRaw = await SecureStore.getItemAsync(PIN_SESSION_KEY);
+          if (pinSessionRaw) {
+            const pinSession = JSON.parse(pinSessionRaw);
+            pinUserId = pinSession?.user?.id;
+            shouldRegister = !!pinUserId;
+            console.log('🔥 PIN session found, userId from PIN:', pinUserId ? pinUserId.substring(0, 8) + '...' : 'null');
+          } else {
+            console.log('🔥 No PIN session found');
+          }
+        } catch (e) {
+          console.warn('PIN session check failed', e);
+        }
+      }
+
+      if (!shouldRegister) {
+        console.log('🔥 No session available, skipping Firebase token registration');
+        setFirebaseToken(null);
+        return;
+      }
+
+      console.log('🔥 Registering Firebase messaging...');
       const token = await registerFirebaseMessaging();
       if (!isMounted) return;
+
       if (token) {
+        console.log('🔥 Firebase token obtained:', token.substring(0, 20) + '...');
         setFirebaseToken(token);
-        await saveFirebaseToken(token);
+        await saveFirebaseToken(token, pinUserId);
+      } else {
+        console.warn('🔥 Failed to get Firebase token');
       }
-    })();
+    };
+
+    initFirebaseToken();
+
+    // Token refresh listener - her zaman aktif
     unsubscribeRefresh = messaging().onTokenRefresh(async (token) => {
+      console.log('🔥 Firebase token refreshed');
       setFirebaseToken(token);
       await saveFirebaseToken(token);
     });
+
     return () => {
       isMounted = false;
       unsubscribeRefresh();
@@ -807,13 +1037,20 @@ function AppInner() {
     return () => authListener.remove();
   }, []);
 
-  const handleAuthSuccess = (newSession) => {
+  const handleAuthSuccess = async (newSession) => {
     setSession(newSession ?? null);
 
     // Arka planda tüm ekranların verilerini önceden yükle
     if (newSession?.user?.id) {
       console.log('Auth Success: Starting background prefetch...');
       prefetchAllData(newSession.user.id);
+
+      // Firebase token'ı da kaydet (PIN girişi sonrası session geçerli olacak)
+      const token = await registerFirebaseMessaging();
+      if (token) {
+        console.log('🔥 Saving Firebase token after auth success...');
+        await saveFirebaseToken(token);
+      }
     }
   };
 

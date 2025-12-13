@@ -22,6 +22,14 @@
           }
         },
         {
+          "client_id": "961544758987-p0sg42ppjfsnnn5rdsqj7jtskil37ddl.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.keeperapp.test",
+            "certificate_hash": "efa55e8082eccc394c65e47eb6b8c606beb17017"
+          }
+        },
+        {
           "client_id": "961544758987-fk2o1sujm7n3o55s23ku6u57tckfv7ij.apps.googleusercontent.com",
           "client_type": 3
         }

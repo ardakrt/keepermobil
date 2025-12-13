@@ -328,8 +328,8 @@ const AuthScreen = ({ onAuthSuccess }) => {
               } catch (e) { }
 
               if (pinExists) {
-                // Session'ı signOut yap - PIN ile giriş yapılana kadar aktif session olmasın
-                await supabase.auth.signOut();
+                // Session'ı signOut yap (sadece local) - Sunucudaki oturumu öldürme
+                await supabase.auth.signOut({ scope: 'local' });
 
                 setHasStoredPin(true);
                 setStoredPinSession(pinSession);
@@ -767,13 +767,13 @@ const AuthScreen = ({ onAuthSuccess }) => {
             setError('3 kez hatalı PIN girdiniz. Lütfen parolanızla giriş yapın.');
             setShowPinFallback(true);
 
-            // PIN session'ı sil
+            // PIN session'ı sil - Sadece yerel oturumu temizle
             SecureStore.deleteItemAsync(PIN_SESSION_KEY).catch(() => { });
             setStoredPinSession(null);
             setHasStoredPin(false);
 
-            // Çıkış yap
-            supabase.auth.signOut().catch(() => { });
+            // Çıkış yap (sadece local) - Token sunucuda kalsın
+            supabase.auth.signOut({ scope: 'local' }).catch(() => { });
 
             setMode('signIn');
             setSignStep('password');
@@ -797,11 +797,11 @@ const AuthScreen = ({ onAuthSuccess }) => {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       }
 
-      onAuthSuccess?.(sessionData);
+      await finalizeAuth(sessionData);
     } catch (err) {
       console.error('PIN login exception:', err);
       // Beklenmedik hata
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       setError(err.message ?? 'Giriş yapılamadı.');
       setShowPinFallback(true);
     } finally {
@@ -1063,8 +1063,8 @@ const AuthScreen = ({ onAuthSuccess }) => {
           setError('');
           setInfo('Hızlı giriş için 6 haneli PIN oluşturun.');
 
-          // Şimdi signOut yap
-          await supabase.auth.signOut();
+          // Şimdi signOut yap (sadece local)
+          await supabase.auth.signOut({ scope: 'local' });
           // Debug log removed
           return;
         }
@@ -1482,7 +1482,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
       setError('');
 
       // Supabase'den çıkış yap
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
     } catch (err) {
       setError(err.message ?? 'Kod doğrulanamadı.');
     } finally {
@@ -1578,15 +1578,48 @@ const AuthScreen = ({ onAuthSuccess }) => {
 
         if (refreshError || !refreshData.session) {
           console.log('Refresh also failed:', refreshError?.message);
-          setError('Oturum süresi dolmuş. PIN ile giriş yapın.');
-          setShowPinFallback(true);
-          // Geçersiz session'ı temizle
-          await biometricPrefs.setStoredSession(null);
-          setBiometricSession(null);
-          return;
-        }
 
-        data = refreshData;
+          // Trusted Device: Kayıtlı parola ile sessiz giriş dene
+          try {
+            const storedPassword = await SecureStore.getItemAsync(REMEMBER_PASSWORD_KEY);
+            const emailForLogin = biometricSession.user?.email || email;
+
+            if (storedPassword && emailForLogin) {
+              console.log('Biometric: Trusted Device - Attempting silent re-login...');
+              const { data: reAuthData, error: reAuthError } = await supabase.auth.signInWithPassword({
+                email: emailForLogin,
+                password: storedPassword,
+              });
+
+              if (!reAuthError && reAuthData?.session) {
+                console.log('Biometric: Trusted Device - Silent re-login successful!');
+
+                // Yeni session ile devam et
+                data = reAuthData;
+
+                // Tüm session'ları güncelle
+                await SecureStore.setItemAsync(PIN_SESSION_KEY, JSON.stringify(minifySession(reAuthData.session)));
+                setStoredPinSession(reAuthData.session);
+                await biometricPrefs.setStoredSession(reAuthData.session);
+                setBiometricSession(reAuthData.session);
+              } else {
+                throw reAuthError || new Error('Silent login failed');
+              }
+            } else {
+              throw new Error('No stored credentials');
+            }
+          } catch (silentLoginError) {
+            console.warn('Biometric: Silent login failed:', silentLoginError?.message);
+            setError('Oturum süresi dolmuş. PIN ile giriş yapın.');
+            setShowPinFallback(true);
+            // Geçersiz session'ı temizle
+            await biometricPrefs.setStoredSession(null);
+            setBiometricSession(null);
+            return;
+          }
+        } else {
+          data = refreshData;
+        }
       }
 
       if (!data?.session) {
@@ -1599,7 +1632,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
       setBiometricFailCount(0);
       await biometricPrefs.setStoredSession(data.session);
       setBiometricSession(data.session);
-      onAuthSuccess?.(data.session);
+      await finalizeAuth(data.session);
     } catch (err) {
       setError(err.message ?? 'Parmak izi ile giriş tamamlanamadı.');
       setShowPinFallback(true);
@@ -2056,8 +2089,8 @@ const AuthScreen = ({ onAuthSuccess }) => {
       console.log('Confirm sonucu:', result);
 
       if (result) {
-        // Oturumu temizle
-        await supabase.auth.signOut();
+        // Oturumu temizle (sadece local)
+        await supabase.auth.signOut({ scope: 'local' });
         // State'leri sıfırla
         setEmail('');
         setFirstName('');

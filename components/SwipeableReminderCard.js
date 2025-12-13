@@ -264,4 +264,13 @@ const SwipeableReminderCard = ({
   );
 };
 
-export default SwipeableReminderCard;
+// Performans için memoize et
+export default React.memo(SwipeableReminderCard, (prev, next) => {
+  return (
+    prev.reminder.id === next.reminder.id &&
+    prev.reminder.title === next.reminder.title &&
+    prev.reminder.due_at === next.reminder.due_at &&
+    prev.reminder.is_completed === next.reminder.is_completed &&
+    prev.isDeleting === next.isDeleting
+  );
+});

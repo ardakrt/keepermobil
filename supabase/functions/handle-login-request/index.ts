@@ -1,6 +1,3 @@
-// supabase/functions/check-reminders/index.ts
-// FCM v1 API ile sunucu tarafından push notification gönderen Edge Function
-// Pil optimizasyonu açıkken bile bildirim ulaşır!
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -11,7 +8,7 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Firebase Service Account bilgileri
+// Firebase Service Account Bilgileri (Hardcoded - En garanti yöntem)
 const FIREBASE_PROJECT_ID = 'ardaproje-c5f21';
 const FIREBASE_CLIENT_EMAIL = 'firebase-adminsdk-fbsvc@ardaproje-c5f21.iam.gserviceaccount.com';
 const FIREBASE_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
@@ -105,36 +102,33 @@ async function sendFCMNotification(token: string, title: string, body: string, d
     const message = {
         message: {
             token: token,
+            // Notification alanı - uygulama kapalıyken sistem bildirimi gösterir
             notification: {
                 title: title,
                 body: body,
             },
             android: {
-                priority: 'HIGH',
-                notification: {
-                    sound: 'default',
-                    channel_id: 'reminders',
-                    visibility: 'PUBLIC',
-                    default_sound: true,
-                    default_vibrate_timings: true,
-                },
+                priority: 'high',
                 direct_boot_ok: true,
-            },
-            apns: {
-                payload: {
-                    aps: {
-                        sound: 'default',
-                        badge: 1,
-                        'content-available': 1,
-                    },
-                },
-                headers: {
-                    'apns-priority': '10',
+                notification: {
+                    channel_id: 'reminders',
+                    default_vibrate_timings: true,
+                    default_light_settings: true,
+                    visibility: 'PUBLIC' as const,
+                    // click_action kaldırıldı - default davranış uygulamayı açar
                 },
             },
-            data: data,
+            // Data alanı - uygulama açıkken veya arka plandayken kullanılır
+            data: {
+                ...data,
+                title: title,
+                body: body,
+                channelId: 'reminders',
+            },
         },
     };
+
+    console.log('Sending FCM message:', JSON.stringify(message));
 
     const response = await fetch(
         `https://fcm.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/messages:send`,
@@ -148,7 +142,9 @@ async function sendFCMNotification(token: string, title: string, body: string, d
         }
     );
 
-    return await response.json();
+    const result = await response.json();
+    console.log('FCM Response:', result);
+    return result;
 }
 
 serve(async (req) => {
@@ -161,118 +157,66 @@ serve(async (req) => {
         const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
         const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-        // Vadesi gelen hatırlatmaları bul
-        const now = new Date();
-        // Zaman aralığını genişlet (Test için: 10 dk önce - 10 dk sonra)
-        const tenMinutesFromNow = new Date(now.getTime() + 10 * 60 * 1000);
-        const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+        const payload = await req.json();
+        console.log('Webhook payload received:', payload);
 
-        console.log(`Checking reminders between ${tenMinutesAgo.toISOString()} and ${tenMinutesFromNow.toISOString()}`);
+        // Webhook'tan gelen veri 'record' içindedir (INSERT trigger ise)
+        const record = payload.record;
 
-        // Authorization Header Kontrolü (Opsiyonel ama önerilir)
-        const authHeader = req.headers.get('Authorization');
-        if (authHeader && !authHeader.startsWith('Bearer ')) {
-            console.warn('Missing or invalid Authorization header');
-        }
-
-        const { data: dueReminders, error: remindersError } = await supabase
-            .from('reminders')
-            .select('id, user_id, title, due_at, notification_sent')
-            .eq('is_completed', false)
-            .eq('notification_sent', false)
-            .gte('due_at', tenMinutesAgo.toISOString())
-            .lte('due_at', tenMinutesFromNow.toISOString());
-
-        if (remindersError) {
-            throw remindersError;
-        }
-
-        console.log(`Found ${dueReminders?.length ?? 0} due reminders`);
-
-        if (!dueReminders || dueReminders.length === 0) {
-            return new Response(JSON.stringify({ message: 'No due reminders', count: 0 }), {
+        if (!record || !record.user_id) {
+            console.warn('No record or user_id in payload');
+            return new Response(JSON.stringify({ message: 'Invalid payload' }), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
         }
 
-        // 3. Kullanıcıların tokenlarını al
-        const userIds = [...new Set(dueReminders.map((r: any) => r.user_id))];
-        console.log(`Fetching tokens for users: ${userIds.join(', ')}`);
+        const userId = record.user_id;
+        const requestId = record.id;
 
-        // 'firebase_token' kolonunu kullanıyoruz (App.js user_tokens tablosunu kullanıyor)
-        const { data: profiles, error: profilesError } = await supabase
+        // Kullanıcının token'ını bul
+        const { data: userTokenData, error: tokenError } = await supabase
             .from('user_tokens')
-            .select('user_id, firebase_token')
-            .in('user_id', userIds);
+            .select('firebase_token')
+            .eq('user_id', userId)
+            .maybeSingle();
 
-        if (profilesError) {
-            console.error('Token fetch error:', profilesError);
-            throw profilesError;
+        if (tokenError) {
+            console.error('Token fetch error:', tokenError);
+            throw tokenError;
         }
 
-        console.log(`Found ${profiles?.length ?? 0} tokens`);
-
-        // Token haritası oluştur
-        const userTokens: Record<string, string> = {};
-        profiles?.forEach((p: any) => {
-            if (p.firebase_token) {
-                userTokens[p.user_id] = p.firebase_token;
-            } else {
-                console.warn(`User ${p.user_id} has no firebase_token`);
-            }
-        });
-
-        const notificationResults = [];
-
-        // 4. Her hatırlatma için bildirim gönder
-        for (const reminder of dueReminders) {
-            const token = userTokens[reminder.user_id];
-
-            if (!token) {
-                console.warn(`No token found for user ${reminder.user_id}, skipping reminder ${reminder.id}`);
-                notificationResults.push({ id: reminder.id, status: 'no_token' });
-                continue;
-            }
-
-            try {
-                console.log(`Sending notification to ${token} for reminder: ${reminder.title}`);
-                // FCM Gönderimi
-                const fcmResponse = await sendFCMNotification(
-                    token,
-                    '⏰ Hatırlatıcı', // Changed title to match original
-                    reminder.title || 'Hatırlatma zamanı geldi!', // Changed body to match original
-                    {
-                        type: 'reminder', // Added type to match original
-                        reminderId: reminder.id,
-                        click_action: 'FLUTTER_NOTIFICATION_CLICK', // Added click_action to match original
-                    }
-                );
-
-                console.log('FCM Response:', JSON.stringify(fcmResponse));
-
-                // notification_sent = true yap
-                await supabase
-                    .from('reminders')
-                    .update({ notification_sent: true })
-                    .eq('id', reminder.id);
-
-                notificationResults.push({ id: reminder.id, status: 'sent', fcm: fcmResponse });
-            } catch (error) {
-                console.error(`Error for reminder ${reminder.id}:`, error);
-                notificationResults.push({ id: reminder.id, status: 'error', error: error.message });
-            }
+        if (!userTokenData || !userTokenData.firebase_token) {
+            console.warn(`No firebase_token found for user ${userId}`);
+            // Hata dönme, 200 dön ki webhook tekrar tekrar denemesin
+            return new Response(JSON.stringify({ message: 'No device token found, skipping notification' }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
         }
 
-        return new Response(JSON.stringify({
-            success: true,
-            processed: dueReminders.length,
-            results: notificationResults
-        }), {
+        const token = userTokenData.firebase_token;
+        const deviceInfo = record.device_info || 'Cihaz';
+        const browserInfo = record.browser_info || 'Web Tarayıcı';
+
+        // Bildirim detayları
+        const title = '🔐 Web Giriş İsteği';
+        const body = `${browserInfo} (${deviceInfo}) giriş onayı bekliyor.`;
+
+        const data = {
+            requestId: requestId,
+            type: 'login_request',
+            click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            categoryIdentifier: 'LOGIN_REQUEST'
+        };
+
+        // Bildirimi gönder
+        await sendFCMNotification(token, title, body, data);
+
+        return new Response(JSON.stringify({ success: true, message: 'Notification sent' }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
 
     } catch (error) {
-        console.error('Unhandled error:', error);
+        console.error('Error processing webhook:', error);
         return new Response(JSON.stringify({ error: error.message }), {
             status: 500,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },

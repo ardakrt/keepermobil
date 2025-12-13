@@ -46,7 +46,7 @@ fcm-service-account.json
 firebase-service-account.json
 *-service-account.json
 GoogleService-Info.plist
-google-services.json
+# google-services.json - EAS Build için gerekli
 *.keystore
 *.keystore.jks
 *.keystore.properties

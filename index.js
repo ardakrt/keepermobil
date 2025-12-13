@@ -1,3 +1,4 @@
+import 'react-native-get-random-values';
 import 'react-native-gesture-handler';
 import { registerRootComponent } from 'expo';
 import messaging from '@react-native-firebase/messaging';
@@ -11,7 +12,7 @@ messaging().setBackgroundMessageHandler(async (remoteMessage) => {
 	if (remoteMessage.data?.type === 'reminder') {
 		// Force notification even in battery optimization
 		const { title, body, reminderId } = remoteMessage.data;
-		
+
 		// Native Android notification will be shown automatically
 		// if message includes notification payload with high priority
 		console.log('Background reminder received:', reminderId);

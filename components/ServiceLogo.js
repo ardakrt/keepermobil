@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 import { View, Text, Image, StyleSheet } from 'react-native';
 import { useAppTheme } from '../lib/theme';
 import Svg, { Path, SvgUri } from 'react-native-svg';
@@ -11,7 +11,7 @@ import Svg, { Path, SvgUri } from 'react-native-svg';
  * 
  * @param variant - 'default' | 'card' (card variant: no border, white bg, shadow)
  */
-export default function ServiceLogo({ brand, fallbackText, size = 'md', style, variant = 'default' }) {
+const ServiceLogo = memo(({ brand, fallbackText, size = 'md', style, variant = 'default' }) => {
   const { theme } = useAppTheme();
   const [imgError, setImgError] = useState(false);
   const [forceSvg, setForceSvg] = useState(false);
@@ -164,7 +164,7 @@ export default function ServiceLogo({ brand, fallbackText, size = 'md', style, v
   }
 
   return renderFallback();
-}
+}); // memo sonu
 
 const styles = StyleSheet.create({
   container: {
@@ -192,3 +192,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 });
+
+export default ServiceLogo;

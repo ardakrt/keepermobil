@@ -26,6 +26,7 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
+      "usesCleartextTraffic": true,
       "package": "com.keeperapp.test",
       "googleServicesFile": "./google-services.json",
       "permissions": [
@@ -78,8 +79,8 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
-          "color": "#ffffff"
+          "icon": "./assets/notification-icon.png",
+          "color": "#22c55e"
         }
       ],
       [

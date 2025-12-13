@@ -167,11 +167,11 @@ const WheelColumn = React.memo(({ data, selectedIndex, onSelect, width, formatIt
         ListHeaderComponent={<View style={{ height: topBottomPad }} />}
         ListFooterComponent={<View style={{ height: topBottomPad }} />}
         renderItem={renderItem}
-        initialNumToRender={15}
-        removeClippedSubviews={false}
-        maxToRenderPerBatch={20}
-        updateCellsBatchingPeriod={100}
-        windowSize={21}
+        initialNumToRender={9}
+        removeClippedSubviews={Platform.OS === 'android'}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={50}
+        windowSize={11}
         snapToInterval={ITEM_HEIGHT}
         snapToAlignment="start"
         decelerationRate="fast"
@@ -791,11 +791,7 @@ const RemindersScreen = ({ embedded = false }) => {
 
   const keyExtractor = useCallback((item) => item.id, []);
 
-  const getItemLayout = useCallback((data, index) => ({
-    length: 100, // Tahmini item yüksekliği
-    offset: 100 * index,
-    index,
-  }), []);
+
 
   const styles = useMemo(
     () =>
@@ -932,7 +928,7 @@ const RemindersScreen = ({ embedded = false }) => {
           width: 56,
           height: 56,
           borderRadius: 28,
-          backgroundColor: theme.colors.primary,
+          backgroundColor: accent || '#007AFF',
           alignItems: 'center',
           justifyContent: 'center',
           shadowColor: '#000',
@@ -1047,11 +1043,11 @@ const RemindersScreen = ({ embedded = false }) => {
           justifyContent: 'center',
         },
         dayButtonSelected: {
-          backgroundColor: theme.colors.primary,
+          backgroundColor: accent || '#007AFF',
         },
         dayButtonToday: {
           borderWidth: 1,
-          borderColor: theme.colors.primary,
+          borderColor: accent || '#007AFF',
         },
         dayText: {
           fontSize: 14,
@@ -1135,7 +1131,7 @@ const RemindersScreen = ({ embedded = false }) => {
           backgroundColor: isDark ? '#2c2c2e' : '#f5f5f5',
         },
         pickerConfirmButton: {
-          backgroundColor: theme.colors.primary,
+          backgroundColor: accent || '#007AFF',
         },
         pickerButtonText: {
           fontSize: 16,
@@ -1190,7 +1186,7 @@ const RemindersScreen = ({ embedded = false }) => {
       days.push(
         <View key={day} style={styles.dayCell}>
           <TouchableOpacity
-            style={[ 
+            style={[
               styles.dayButton,
               isSelected(day) && styles.dayButtonSelected,
               isToday(day) && !isSelected(day) && styles.dayButtonToday,
@@ -1202,7 +1198,7 @@ const RemindersScreen = ({ embedded = false }) => {
             }}
           >
             <Text
-              style={[ 
+              style={[
                 styles.dayText,
                 isSelected(day) && styles.dayTextSelected,
                 isWeekend && !isSelected(day) && styles.dayTextWeekend,
