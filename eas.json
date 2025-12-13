@@ -5,8 +5,7 @@
   "build": {
     "preview": {
       "android": {
-        "buildType": "apk",
-        "googleServicesFile": "./google-services.json"
+        "buildType": "apk"
       },
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "https://jpjgagpmtkuhdvvjqntd.supabase.co",
