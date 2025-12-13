@@ -74,6 +74,7 @@
       "resetRedirectBase": "https://ardakaratas.com.tr"
     },
     "plugins": [
+      "./plugins/withGoogleServicesJson.js",
       [
         "expo-notifications",
         {
