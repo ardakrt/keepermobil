@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "961544758987",
+    "project_id": "ardaproje-c5f21",
+    "storage_bucket": "ardaproje-c5f21.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:961544758987:android:438c557bdd39adff4f5d4e",
+        "android_client_info": {
+          "package_name": "com.keeperapp.test"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "961544758987-4d6p3eddae72d60dtuot15qac0kniio2.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.keeperapp.test",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "961544758987-fk2o1sujm7n3o55s23ku6u57tckfv7ij.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCmDVYBBi7ClDdBbfvL-tDtERJfVY8uaZE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "961544758987-fk2o1sujm7n3o55s23ku6u57tckfv7ij.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
