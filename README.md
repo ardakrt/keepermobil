@@ -1,5 +1,3 @@
-# 1. GITHUB README.MD İÇERİĞİ (TAMAMI)
-
 # KeeperMobil: Personal Note Vault (Expo + Supabase)
 
 **KeeperMobil** is a feature-rich, cross-platform mobile application built with **Expo (React Native)** and **Supabase**. It provides a secure environment for managing notes, reminders, cards, and sensitive account information with robust authentication and data synchronization.
@@ -79,3 +77,4 @@ node scripts/test-rls.js
 The script validates that signed-out access is blocked, users can only view their own data, and unauthorized upsert attempts are rejected.
 
 ---
+
