@@ -1,85 +1,81 @@
-# Kişisel Not Kasası (Expo + Supabase)
+# 1. GITHUB README.MD İÇERİĞİ (TAMAMI)
 
-Bu proje Expo (RN) tabanlı, Supabase ile kimlik doğrulama ve veri saklama yapan çoklu özellikli bir uygulamadır.
+# KeeperMobil: Personal Note Vault (Expo + Supabase)
 
-## Kurulum
+**KeeperMobil** is a feature-rich, cross-platform mobile application built with **Expo (React Native)** and **Supabase**. It provides a secure environment for managing notes, reminders, cards, and sensitive account information with robust authentication and data synchronization.
 
-1) Bağımlılıklar
+---
 
-```powershell
+## Installation
+
+### 1. Install Dependencies
 npm install
-```
 
-2) Ortam değişkenleri (.env)
+### 2. Environment Variables (.env)
+Create a `.env` file in the root directory and fill in your Supabase credentials (refer to `.env.example`):
+EXPO_PUBLIC_SUPABASE_URL=https://<your-project-id>.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
 
-`.env` dosyası oluşturup aşağıyı doldurun (örnek `.env.example`):
+### 3. Supabase Schema and Policies
+1. Copy the content of `supabase/schema.sql` and run it in the Supabase SQL Editor. This will initialize the tables and core Row Level Security (RLS) policies.
+2. Additionally, apply the idempotent migration found in `supabase/migrations/2025-10-15-rls-user_tokens.sql` to set up detailed RLS for the `public.user_tokens` table.
 
-```
-EXPO_PUBLIC_SUPABASE_URL=https://<project>.supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=<anon key>
-```
-
-3) Supabase şema ve politikalar
-
-`supabase/schema.sql` içeriğini Supabase SQL Editor ile çalıştırın. Bu, tabloları ve RLS politikalarını oluşturur.
-
-Ek olarak, `supabase/migrations/2025-10-15-rls-user_tokens.sql` dosyası `public.user_tokens` tablosu için detaylı RLS politikalarını idempotent olarak uygular. İsterseniz bu migration dosyasını da SQL Editor üzerinden çalıştırabilirsiniz.
-
-4) Geliştirme
-
-```powershell
+### 4. Development
 npm run start
-```
 
-Android için:
-
-```powershell
+To run on Android:
 npm run android
-```
 
-## Bildirimler
+---
 
-- Expo Notifications: `user_tokens.expo_token` alanı ile Expo Push kullanılır.
-- Firebase Messaging: `user_tokens.firebase_token` alanı ile FCM token’ı tutulur. Android arka plan mesaj işleyicisi `index.js` içinde kayıtlıdır.
+## Notifications
 
-## Güvenlik Notları
+- Expo Notifications: Utilizes the `user_tokens.expo_token` field for standard push delivery.
+- Firebase Messaging (FCM): Managed via the `user_tokens.firebase_token` field. The Android background message handler is registered in `index.js`.
 
-- `fcm-service-account.json`, `google-services.json` gibi dosyaları repoya koymayın. `.gitignore` buna göre güncellenmiştir.
-- Varsayılan Supabase anahtarlarını app.json’dan kaldırdık, `.env` üzerinden yönetiyoruz.
+---
 
-## Dizinler
+## Security Notes
 
-- `lib/` Supabase istemcisi, yerel auth ve depolama anahtarları
-- `screens/` Uygulama ekranları (Notes, Reminders, Cards, Accounts, Ibans, Settings)
-- `supabase/` Edge function örneği ve şema
+- Secret Management: Sensitive files like `fcm-service-account.json` and `google-services.json` are excluded from version control via `.gitignore`.
+- Key Safety: Supabase keys are managed through environment variables instead of hardcoding them in `app.json`.
+- Data Isolation: Every table is protected by RLS, ensuring users can only access their own records (`auth.uid()`).
 
-## Sorun giderme
+---
 
-- Arka plan FCM mesajları için handler’ın `index.js`’te kayıtlı olduğundan emin olun.
-- Realtime için Supabase RLS politikalarının doğru olduğundan emin olun (auth.uid() eşleşmesi).
+## Directory Structure
 
-## RLS ve hızlı test (isteğe bağlı)
+- lib/: Supabase client configuration, local auth logic, and storage keys.
+- screens/: Core application views (Notes, Reminders, Cards, Accounts, Ibans, Settings).
+- supabase/: Edge functions examples and database schema definitions.
+- scripts/: Utility scripts for testing and maintenance.
 
-RLS kurulumunun doğru olduğunu hızlıca doğrulamak için `scripts/test-rls.js` aracını kullanabilirsiniz.
+---
 
-PowerShell örnekleri:
+## Troubleshooting
 
-```powershell
-# Zorunlu
+- FCM: Ensure the background handler is correctly registered in `index.js` for Android devices.
+- Realtime: Verify that Supabase RLS policies are enabled and correctly matching `auth.uid()`.
+
+---
+
+## RLS & Quick Testing (Optional)
+
+To ensure the security layer is functioning correctly, you can use the built-in testing utility `scripts/test-rls.js`.
+
+### PowerShell Examples:
+# Required
 $env:SUPABASE_URL = "https://<project>.supabase.co"
 $env:SUPABASE_ANON_KEY = "<anon-key>"
 
-# (İsteğe bağlı) Test kullanıcılarını otomatik oluşturmak için service role anahtarı
-# Güvenlik: Bunu sadece lokal testte ve güvende tutarak kullanın
-# $env:SERVICE_ROLE_KEY = "<service-role-key>"
-
-# Test kullanıcıları (manuel ya da otomatik oluşturma için)
+# Test user credentials
 $env:TEST_USER_A_EMAIL = "user_a@example.com"
 $env:TEST_USER_A_PASSWORD = "passwordA"
 $env:TEST_USER_B_EMAIL = "user_b@example.com"
 $env:TEST_USER_B_PASSWORD = "passwordB"
 
 node scripts/test-rls.js
-```
 
-Script; signed-out erişimin engellendiğini, her kullanıcının yalnızca kendi satırlarını gördüğünü ve yabancı `user_id` ile upsert denemelerinin reddedildiğini doğrular.
+The script validates that signed-out access is blocked, users can only view their own data, and unauthorized upsert attempts are rejected.
+
+---
