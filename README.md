@@ -1,80 +1,160 @@
-# KeeperMobil: Personal Note Vault (Expo + Supabase)
+<div align="center">
 
-**KeeperMobil** is a feature-rich, cross-platform mobile application built with **Expo (React Native)** and **Supabase**. It provides a secure environment for managing notes, reminders, cards, and sensitive account information with robust authentication and data synchronization.
+  <h1>KeeperMobil</h1>
+
+  <p><strong>Personal Vault & Data Security Platform</strong></p>
+
+  <p>
+    A high-security, cross-platform mobile application built with React Native, Expo, and Supabase. Protect notes, reminders, cards, and account credentials with end-to-end Row Level Security.
+  </p>
+
+  <p>
+    <a href="https://expo.dev"><img src="https://img.shields.io/badge/Expo-v54.0-1C1C1E?style=flat-square&logo=expo" alt="Expo" /></a>
+    <a href="https://reactnative.dev"><img src="https://img.shields.io/badge/React_Native-v0.81-1C1C1E?style=flat-square&logo=react" alt="React Native" /></a>
+    <a href="https://supabase.com"><img src="https://img.shields.io/badge/Supabase-Database_%26_RLS-1C1C1E?style=flat-square&logo=supabase" alt="Supabase" /></a>
+    <a href="https://firebase.google.com"><img src="https://img.shields.io/badge/Firebase-FCM-1C1C1E?style=flat-square&logo=firebase" alt="Firebase" /></a>
+    <a href="https://github.com/ardakrt/keepermobil/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-1C1C1E?style=flat-square" alt="License" /></a>
+  </p>
+
+  <br />
+
+</div>
 
 ---
 
-## Installation
+### Overview
 
-### 1. Install Dependencies
+KeeperMobil is a modern mobile client designed to provide secure, isolated storage for sensitive personal information. Utilizing Supabase Row Level Security (RLS) alongside local biometric authentication, it ensures that your data remains strictly accessible only by you.
+
+---
+
+### Key Features
+
+- **Secure Notes & Reminders** — Real-time data synchronization backed by Supabase PostgreSQL, featuring local scheduled push notifications.
+- **Encrypted Digital Wallet** — Isolated storage for credit cards, bank accounts, and IBANs with client-side field encryption.
+- **Biometric Access Control** — Native integration with Face ID and Fingerprint authentication via `expo-local-authentication`.
+- **Zero-Trust Security Model** — Full database protection utilizing strict `auth.uid()` Row Level Security policies across all tables.
+- **Dual Notification Engine** — Seamless handling of foreground and background alerts via Expo Notifications and Firebase Cloud Messaging (FCM).
+- **Adaptive Interface** — System-aware dark/light mode engine with customizable accent palettes and haptic feedback.
+
+---
+
+### Technology Stack
+
+| Layer | Technology |
+| :--- | :--- |
+| **Framework** | React Native (v0.81), Expo (v54.0) |
+| **Navigation** | React Navigation (Native Stack, Blurred Tab Bar) |
+| **Backend & Auth** | Supabase (PostgreSQL, Row Level Security) |
+| **Notifications** | Expo Notifications, Firebase Cloud Messaging (FCM) |
+| **Security & Storage** | Expo SecureStore, AsyncStorage, App-level Field Encryption |
+| **UI Components** | React Native Reanimated, Lucide Icons, Expo Blur |
+
+---
+
+### Project Structure
+
+```
+keepermobil/
+├── assets/                  # Application branding and media assets
+├── components/              # Atomic UI components (Buttons, Inputs, Cards, BlurHeader)
+├── lib/                     # Theme engine, Supabase client, auth helpers, notifications
+├── screens/                 # Core navigation screens
+│   ├── AuthScreen.js        # Authentication & Biometric login
+│   ├── NotesScreen.js       # Notes management & real-time sync
+│   ├── RemindersScreen.js   # Scheduled alerts & reminders
+│   ├── WalletScreen.js      # Encrypted cards, accounts & IBANs
+│   ├── SettingsScreen.js    # User preferences, themes & security settings
+│   └── ProfileScreen.js     # User profile modal
+├── scripts/                 # Automated RLS validation scripts
+└── supabase/                # Database schemas, RLS policies & edge functions
+```
+
+---
+
+### Getting Started
+
+#### Prerequisites
+
+- Node.js (v18 or higher)
+- Expo Go app or iOS/Android emulator
+- Supabase project instance
+
+#### 1. Repository Setup
+
+```bash
+git clone https://github.com/ardakrt/keepermobil.git
+cd keepermobil
 npm install
+```
 
-### 2. Environment Variables (.env)
-Create a `.env` file in the root directory and fill in your Supabase credentials (refer to `.env.example`):
+#### 2. Environment Configuration
+
+Create a `.env` file in the root directory:
+
+```env
 EXPO_PUBLIC_SUPABASE_URL=https://<your-project-id>.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+```
 
-### 3. Supabase Schema and Policies
-1. Copy the content of `supabase/schema.sql` and run it in the Supabase SQL Editor. This will initialize the tables and core Row Level Security (RLS) policies.
-2. Additionally, apply the idempotent migration found in `supabase/migrations/2025-10-15-rls-user_tokens.sql` to set up detailed RLS for the `public.user_tokens` table.
+#### 3. Database Initialization
 
-### 4. Development
+Execute `supabase/schema.sql` in your Supabase SQL Editor to initialize core tables and RLS policies. Optionally apply `supabase/migrations/2025-10-15-rls-user_tokens.sql` for user token policies.
+
+#### 4. Run Development Server
+
+```bash
+# Start Expo development server
 npm run start
 
-To run on Android:
+# Launch on Android emulator / device
 npm run android
 
----
-
-## Notifications
-
-- Expo Notifications: Utilizes the `user_tokens.expo_token` field for standard push delivery.
-- Firebase Messaging (FCM): Managed via the `user_tokens.firebase_token` field. The Android background message handler is registered in `index.js`.
+# Launch on iOS simulator
+npm run ios
+```
 
 ---
 
-## Security Notes
+### Security & RLS Verification
 
-- Secret Management: Sensitive files like `fcm-service-account.json` and `google-services.json` are excluded from version control via `.gitignore`.
-- Key Safety: Supabase keys are managed through environment variables instead of hardcoding them in `app.json`.
-- Data Isolation: Every table is protected by RLS, ensuring users can only access their own records (`auth.uid()`).
+> [!NOTE]
+> All database access is governed by Supabase Row Level Security policies (`auth.uid() = user_id`), ensuring complete data isolation per user.
 
----
+To verify policy enforcement, run the automated RLS test suite:
 
-## Directory Structure
-
-- lib/: Supabase client configuration, local auth logic, and storage keys.
-- screens/: Core application views (Notes, Reminders, Cards, Accounts, Ibans, Settings).
-- supabase/: Edge functions examples and database schema definitions.
-- scripts/: Utility scripts for testing and maintenance.
-
----
-
-## Troubleshooting
-
-- FCM: Ensure the background handler is correctly registered in `index.js` for Android devices.
-- Realtime: Verify that Supabase RLS policies are enabled and correctly matching `auth.uid()`.
-
----
-
-## RLS & Quick Testing (Optional)
-
-To ensure the security layer is functioning correctly, you can use the built-in testing utility `scripts/test-rls.js`.
-
-### PowerShell Examples:
-# Required
-$env:SUPABASE_URL = "https://<project>.supabase.co"
+```powershell
+$env:SUPABASE_URL = "https://<project-id>.supabase.co"
 $env:SUPABASE_ANON_KEY = "<anon-key>"
-
-# Test user credentials
 $env:TEST_USER_A_EMAIL = "user_a@example.com"
 $env:TEST_USER_A_PASSWORD = "passwordA"
 $env:TEST_USER_B_EMAIL = "user_b@example.com"
 $env:TEST_USER_B_PASSWORD = "passwordB"
 
 node scripts/test-rls.js
-
-The script validates that signed-out access is blocked, users can only view their own data, and unauthorized upsert attempts are rejected.
+```
 
 ---
 
+### Build & Deployment
+
+Building standalone APK or App Bundle binaries using EAS Build:
+
+```bash
+# Development build (APK)
+eas build --profile development --platform android
+
+# Production build
+eas build --profile production --platform android
+```
+
+---
+
+### License
+
+Distributed under the MIT License. See `LICENSE` for details.
+
+<div align="center">
+  <br />
+  <sub>Maintained by <a href="https://github.com/ardakrt">@ardakrt</a></sub>
+</div>
